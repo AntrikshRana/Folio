@@ -27,3 +27,9 @@ GET  /download/{id}                streams chunks back in order
 
 ## Node (:8001+)
 GET /health · PUT /chunks/{fid}/{idx} · GET /chunks/{fid}/{idx}
+
+## Database (Part 1)
+Metadata lives in SQLite (`backend/folio.db`, created on first start): tables `nodes`, `files`, `chunks`.
+Inspect it with:  sqlite3 backend/folio.db "SELECT filename,status FROM files;"
+Chunk bytes stay on the nodes; the DB records which node holds which chunk, so metadata survives a coordinator restart.
+GET /files now returns [{id,filename,size,chunks,nodes,available,created_at}]; `available` is false if a node holding the file is down.

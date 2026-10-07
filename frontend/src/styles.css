@@ -104,3 +104,15 @@ input[type=range]:disabled{opacity:.35}
 .row{row-gap:12px}
 .meta{flex-wrap:wrap;gap:4px 12px}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+/* stored files + download buttons */
+.lib{display:grid;gap:18px}
+.lib-row{display:flex;align-items:center;gap:16px;padding:18px 22px;flex-wrap:wrap}
+.lib-name{flex:1 1 200px;min-width:0;display:flex;flex-direction:column}
+.lib-name b{font:400 18px var(--serif);overflow-wrap:anywhere}
+.lib-name small{color:var(--ink2)}
+.dots{display:flex;gap:5px}
+.dots i{width:12px;height:12px;border-radius:50%;background:var(--c)}
+a.btn{text-decoration:none;display:inline-block}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
+.file .dl{margin-top:14px}

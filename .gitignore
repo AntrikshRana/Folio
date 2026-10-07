@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Local backend data
+/backend/folio.db
+/backend/folio.db-*
+/backend/data/
+/backend/meta/
+
+# Node.js / Vite
+node_modules/
+/frontend/dist/
+/frontend/.vite/
+
+# Environment variables and local secrets
+.env
+.env.*
+!.env.example
+
+# Logs and test coverage
+*.log
+coverage/
+.coverage
+.pytest_cache/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/

@@ -3,7 +3,8 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 const MB = 1048576
 const SIZES = [1, 2, 4, 8, 16, 32, 64]
 type NodeInfo = { id: number; name: string; url: string; online: boolean; throughput_mbps: number; chunks: number }
-type Transfer = { id: string; name: string; size: number; sent: number; chunks: { size: number; node: number }[]; label: string; done: boolean }
+type Transfer = { id: string; name: string; size: number; sent: number; chunks: { size: number; node: number }[]; label: string; done: boolean; fid?: string }
+type FileRow = { id: string; filename: string; size: number; chunks: number; nodes: number[]; available: boolean }
 
 const fmt = (b: number) => (b >= 1024 * MB ? (b / 1024 / MB).toFixed(2) + ' GB' : (b / MB).toFixed(1) + ' MB')
 const post = (url: string, body?: unknown) =>
@@ -16,9 +17,11 @@ export default function App() {
   const [fixedIdx, setFixedIdx] = useState(3)
   const [over, setOver] = useState(false)
   const input = useRef<HTMLInputElement>(null)
+  const [library, setLibrary] = useState<FileRow[]>([])
+  const loadLibrary = () => fetch('/api/files').then(r => r.json()).then(setLibrary).catch(() => {})
 
   useEffect(() => {
-    const poll = () => fetch('/api/nodes/health').then(r => r.json()).then(setNodes).catch(() => setNodes([]))
+    const poll = () => { fetch('/api/nodes/health').then(r => r.json()).then(setNodes).catch(() => setNodes([])); loadLibrary() }
     poll(); const t = setInterval(poll, 2000); return () => clearInterval(t)
   }, [])
 
@@ -30,6 +33,7 @@ export default function App() {
     setTransfers(ts => [{ id: key, name: file.name, size: file.size, sent: 0, chunks: [], label: 'starting…', done: false }, ...ts])
     try {
       const init = await (await post('/upload/init', { filename: file.name, size: file.size, mode: m, chunk_size_mb: fixed })).json()
+      patch(key, () => ({ fid: init.upload_id }))
       let off = 0, idx = 0, mb: number = init.chunk_size_mb
       while (off < file.size) {
         const blob = file.slice(off, off + mb * MB)
@@ -43,6 +47,7 @@ export default function App() {
       const c = await post(`/upload/${init.upload_id}/complete`)
       if (!c.ok) throw new Error((await c.json()).detail)
       patch(key, t => ({ done: true, label: `${t.chunks.length} chunks stored` }))
+      loadLibrary()
     } catch (e) {
       patch(key, () => ({ label: 'failed: ' + (e as Error).message }))
     }
@@ -116,11 +121,29 @@ export default function App() {
                 ))}
               </div>
               <div className="done-stamp">STORED</div>
+              {t.done && t.fid && <a className="btn dl" href={`/api/download/${t.fid}`}>Download</a>}
             </article>
           )
         })}
       </div>
       {transfers.length === 0 && <div className="sheet empty">Nothing uploading yet – drop a file above.</div>}
+
+      <div className="sec-t"><h2>Stored files</h2><span>saved in the database, ready to download</span></div>
+      {library.length === 0 ? <p className="hint">No finished uploads yet.</p> : (
+        <div className="lib">
+          {library.map(f => (
+            <div key={f.id} className="sheet lib-row">
+              <div className="lib-name"><b>{f.filename}</b><small>{fmt(f.size)} · {f.chunks} chunks</small></div>
+              <span className="dots" title="nodes holding chunks">
+                {f.nodes.map(n => <i key={n} style={{ '--c': `var(--n${n % 4})` } as CSSProperties} />)}
+              </span>
+              {f.available
+                ? <a className="btn dl" href={`/api/download/${f.id}`}>Download</a>
+                : <button className="btn dl" disabled>Node offline</button>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
