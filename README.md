@@ -1,35 +1,51 @@
-# Folio – distributed chunked file upload
+# Folio – distributed chunked file sharing
 
-## Run (needs Python 3.10+ and Node 18+)
+React UI  →  FastAPI coordinator (+ SQLite metadata)  →  FastAPI storage nodes.
+Hosts upload big files in adaptive chunks (replicated on 2 nodes); guests join with a code and download.
 
-Terminal 1 – backend (3 nodes on 8001-8003 + coordinator on 8000)
-    cd backend
-    python -m venv .venv
-    source .venv/bin/activate        # Windows: .venv\Scripts\activate
-    pip install -r requirements.txt
-    python run_all.py
+## Structure
+    render.yaml                  Render Blueprint (static site + coordinator + 3 nodes)
+    backend/
+      requirements.txt
+      run_local.py               starts 3 nodes + coordinator for local dev
+      app/
+        config.py                every setting is an environment variable
+        db.py                    SQLite schema + migrations
+        pool.py                  node state: health, throughput, load, simulated failures
+        auth.py                  session / host-token checks
+        files.py                 file listing, chunk plan, streaming download
+        coordinator.py           FastAPI app (uvicorn app.coordinator:app)
+        node.py                  storage node (uvicorn app.node:app)
+        routes/ upload.py  sessions.py  nodes.py
+    frontend/
+      src/ App.tsx  api.ts  types.ts  demo.ts  components/{SessionGate,Room}.tsx
 
-Terminal 2 – frontend
-    cd frontend
-    npm install
-    npm run dev                      # open http://localhost:5173
+## Run locally (Python 3.10+, Node 18+)
+    cd backend && python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
+    pip install -r requirements.txt && python run_local.py
+    # new terminal
+    cd frontend && npm install && npm run dev        # http://localhost:5173
+Other devices on your Wi-Fi can join at http://<your-LAN-IP>:5173 (dev server runs with --host).
 
-Chunks land in backend/data/nodeN/<upload_id>/<index>.part, manifests in backend/meta/.
-Swagger docs: http://127.0.0.1:8000/docs
+## Deploy on Render
+1. Push this folder to a GitHub repo (render.yaml must be in the repo root).
+2. Render dashboard → New → Blueprint → select the repo → Apply.
+3. Check the real service URLs. If Render added suffixes, update NODES, CORS_ORIGINS and VITE_API_URL
+   in render.yaml (or the dashboard) and redeploy.
+4. Open the static site URL, start a session, share the code.
+Free-plan caveats: services sleep when idle (first request is slow), and the filesystem is ephemeral – uploaded
+chunks and the SQLite file are lost on restart/redeploy. For durable data use paid instances with a disk
+(set DATA_DIR / NODE_DIR to the disk's mount path).
 
-## API (coordinator, :8000; the UI reaches it through the /api proxy)
-GET  /nodes/health                 -> [{id,name,url,online,throughput_mbps,chunks}]
-POST /upload/init                  {filename,size,mode:auto|fixed,chunk_size_mb} -> {upload_id,chunk_size_mb}
-PUT  /upload/{id}/chunk/{index}    raw bytes -> {index,node_index,size,throughput_mbps,next_chunk_size_mb}
-POST /upload/{id}/complete         -> {ok,chunks}   (400 if byte total mismatches)
-GET  /files                        -> [{id,filename,size,chunks}]
-GET  /download/{id}                streams chunks back in order
+## Settings (env vars)
+NODES, CORS_ORIGINS, REPLICAS (2), MAX_CHUNK_MB (64), SESSION_TTL_HOURS (24), DATA_DIR, NODE_NAME, NODE_DIR, VITE_API_URL (frontend build)
 
-## Node (:8001+)
-GET /health · PUT /chunks/{fid}/{idx} · GET /chunks/{fid}/{idx}
+## API (coordinator)
+POST /sessions {name} → {code, host_token}        POST /sessions/{code}/join {name}
+GET  /sessions/{code} → members + files           GET  /sessions/{code}/files/{id}/download
+POST /upload/init (X-Host-Token) · PUT /upload/{id}/chunk/{i} · POST /upload/{id}/complete
+GET  /nodes/health · POST /nodes/{i}/fail|recover (host only) · GET /healthz
 
-## Database (Part 1)
-Metadata lives in SQLite (`backend/folio.db`, created on first start): tables `nodes`, `files`, `chunks`.
-Inspect it with:  sqlite3 backend/folio.db "SELECT filename,status FROM files;"
-Chunk bytes stay on the nodes; the DB records which node holds which chunk, so metadata survives a coordinator restart.
-GET /files now returns [{id,filename,size,chunks,nodes,available,created_at}]; `available` is false if a node holding the file is down.
+## Known limits
+No automatic re-replication after a failure; deleted/expired sessions leave orphaned chunk bytes on nodes;
+no per-chunk checksums; the coordinator relays chunk bytes (a bottleneck at scale).

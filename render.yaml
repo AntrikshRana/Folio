@@ -1,0 +1,67 @@
+# Render Blueprint: one static site (UI) + one coordinator + three storage nodes.
+# Push this repo to GitHub, then Render -> New -> Blueprint -> pick the repo.
+# NOTE: service names must be globally unique on Render. If "folio-*" is taken, Render adds a suffix;
+# then fix NODES / CORS_ORIGINS / VITE_API_URL below to match the real URLs and redeploy.
+services:
+  - type: web
+    name: folio-node-1
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.node:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - { key: NODE_NAME, value: node-alpha }
+      - { key: NODE_DIR, value: /tmp/chunks }        # ephemeral on the free plan; use a disk mount for persistence
+
+  - type: web
+    name: folio-node-2
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.node:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - { key: NODE_NAME, value: node-bravo }
+      - { key: NODE_DIR, value: /tmp/chunks }
+
+  - type: web
+    name: folio-node-3
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.node:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - { key: NODE_NAME, value: node-charlie }
+      - { key: NODE_DIR, value: /tmp/chunks }
+
+  - type: web
+    name: folio-coordinator
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.coordinator:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODES                                    # public URLs of the three nodes, comma separated
+        value: https://folio-node-1.onrender.com,https://folio-node-2.onrender.com,https://folio-node-3.onrender.com
+      - key: CORS_ORIGINS                             # the static site's URL
+        value: https://folio.onrender.com
+      - { key: MAX_CHUNK_MB, value: "8" }             # free instances have little RAM; chunks pass through memory
+      - { key: REPLICAS, value: "2" }
+      - { key: DATA_DIR, value: /tmp/folio }          # SQLite file; ephemeral on free, use a disk for persistence
+
+  - type: web
+    name: folio
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL                             # baked in at build time
+        value: https://folio-coordinator.onrender.com
