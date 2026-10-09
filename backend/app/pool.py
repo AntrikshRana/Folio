@@ -4,7 +4,7 @@ import httpx
 from fastapi import HTTPException
 from . import config
 
-client = httpx.AsyncClient(timeout=httpx.Timeout(60, connect=2))
+client = httpx.AsyncClient(timeout=httpx.Timeout(60, connect=config.NODE_CONNECT_TIMEOUT))
 up = {u: True for u in config.NODES}       # last known reachability
 tp = {u: 20.0 for u in config.NODES}       # smoothed throughput per node, MB/s
 held = [0] * len(config.NODES)             # replicas placed per node (restored from the DB at startup)
@@ -19,7 +19,7 @@ async def ping(i: int) -> dict:
     base = {"id": i, "url": url, "name": names.get(i, f"node-{i+1}"), "online": False,
             "failed": False, "throughput_mbps": 0, "chunks": 0}
     try:
-        r = await client.get(f"{url}/health", timeout=5)      # generous: free hosts wake up slowly
+        r = await client.get(f"{url}/health", timeout=config.PING_TIMEOUT)
         r.raise_for_status()
         d = r.json(); up[url] = True; names[i] = d["name"]
         return {**base, "name": d["name"], "online": True, "throughput_mbps": round(tp[url], 1), "chunks": d["chunks"]}
@@ -40,7 +40,7 @@ async def admin(i: int, action: str) -> dict:
     if not 0 <= i < len(config.NODES):
         raise HTTPException(404, "no such node")
     try:
-        (await client.post(f"{config.NODES[i]}/admin/{action}", timeout=5)).raise_for_status()
+        (await client.post(f"{config.NODES[i]}/admin/{action}", timeout=config.PING_TIMEOUT)).raise_for_status()
     except Exception:
         raise HTTPException(502, "node process is unreachable")
     up[config.NODES[i]] = action == "recover"

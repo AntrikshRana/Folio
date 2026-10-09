@@ -49,3 +49,6 @@ GET  /nodes/health · POST /nodes/{i}/fail|recover (host only) · GET /healthz
 ## Known limits
 No automatic re-replication after a failure; deleted/expired sessions leave orphaned chunk bytes on nodes;
 no per-chunk checksums; the coordinator relays chunk bytes (a bottleneck at scale).
+
+Cold-start settings (Render free plan): NODE_CONNECT_TIMEOUT, PING_TIMEOUT (seconds, defaults 2 / 5; render.yaml sets 30).
+"Failed to fetch" checklist: open <coordinator>/healthz; check VITE_API_URL (needs a rebuild); CORS_ORIGINS="*" is the simplest.

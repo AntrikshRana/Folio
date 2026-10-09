@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { url } from './api'
 import Room from './components/Room'
 import SessionGate from './components/SessionGate'
 import type { Session } from './types'
@@ -12,6 +13,7 @@ function loadSession(): Session | null {
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession)
+  useEffect(() => { fetch(url('/nodes/health')).catch(() => {}) }, [])   // pre-wake coordinator + nodes
   const change = (s: Session | null) => {
     setSession(s)
     if (s) localStorage.setItem(KEY, JSON.stringify(s)); else localStorage.removeItem(KEY)

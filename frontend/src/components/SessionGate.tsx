@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { post } from '../api'
+import { API, post } from '../api'
 import type { Session } from '../types'
 
 export default function SessionGate({ onEnter }: { onEnter: (s: Session) => void }) {
@@ -8,6 +8,7 @@ export default function SessionGate({ onEnter }: { onEnter: (s: Session) => void
   const [code, setCode] = useState(invite.toUpperCase())
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [waking, setWaking] = useState(false)
 
   async function go(kind: 'create' | 'join') {
     if (!name.trim()) return setErr('Please enter your name first.')
@@ -15,13 +16,19 @@ export default function SessionGate({ onEnter }: { onEnter: (s: Session) => void
     setBusy(true); setErr('')
     try {
       const r = kind === 'create'
-        ? await post('/sessions', { name: name.trim() })
-        : await post(`/sessions/${encodeURIComponent(code.trim())}/join`, { name: name.trim() })
+        ? await post('/sessions', { name: name.trim() }, undefined, () => setWaking(true))
+        : await post(`/sessions/${encodeURIComponent(code.trim())}/join`, { name: name.trim() }, undefined, () => setWaking(true))
       const d = await r.json()
       if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Could not continue')
       history.replaceState(null, '', location.pathname)
       onEnter({ code: d.code, name: name.trim(), hostToken: d.host_token })
-    } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+    } catch (e) {
+      if (e instanceof TypeError) {            // the browser never got an answer
+        setErr(`Can't reach the server at ${API}. ` + (import.meta.env.PROD && API === '/api'
+          ? 'This build has no VITE_API_URL set: set it to your coordinator URL and redeploy the site.'
+          : `Open ${API}/healthz in a new tab. If it shows {"ok":true}, the server is fine and CORS_ORIGINS is wrong; if it does not load, the server is down or the URL is wrong.`))
+      } else setErr((e as Error).message)
+    } finally { setBusy(false); setWaking(false) }
   }
 
   return (
@@ -44,6 +51,7 @@ export default function SessionGate({ onEnter }: { onEnter: (s: Session) => void
           <button className="btn" disabled={busy} onClick={() => go('join')}>Join</button>
         </section>
       </div>
+      {waking && <p className="hint" style={{ textAlign: 'center' }}>Waking up the server – free hosting sleeps when idle, this can take up to a minute…</p>}
       {err && <p className="err">{err}</p>}
     </div>
   )
