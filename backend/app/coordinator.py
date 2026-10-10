@@ -21,6 +21,14 @@ app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_meth
 for r in (nodes.router, sessions.router, upload.router):
     app.include_router(r)
 
+def _rss_mb():
+    try:
+        for line in open("/proc/self/status"):
+            if line.startswith("VmRSS"):
+                return int(line.split()[1]) // 1024
+    except OSError:
+        return None
+
 @app.get("/healthz")
 def healthz():
-    return {"ok": True}
+    return {"ok": True, "version": "streaming-2", "rss_mb": _rss_mb()}

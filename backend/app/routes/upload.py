@@ -43,8 +43,14 @@ async def _send(tmp):
     while block := tmp.read(config.MB):
         yield block
 
+_slots = asyncio.Semaphore(config.MAX_PARALLEL_UPLOADS)
+
 @router.put("/{uid}/chunk/{idx}")
 async def upload_chunk(uid: str, idx: int, request: Request):
+    async with _slots:                                # a 0.1-CPU instance is better off finishing chunks one by one
+        return await _handle_chunk(uid, idx, request)
+
+async def _handle_chunk(uid: str, idx: int, request: Request):
     with db.tx() as c:
         f = c.execute("SELECT mode, status FROM files WHERE id=?", (uid,)).fetchone()
     if not f or f["status"] != "uploading":

@@ -59,3 +59,6 @@ DELETE /upload/{id} (X-Host-Token) cancels/deletes a file: removes its rows and 
 Chunks are streamed through disk/small blocks, never held whole in RAM: a node writes uploads to disk as they arrive and
 serves downloads with FileResponse; the coordinator spools each incoming chunk to a temp file, forwards it from disk, and
 relays downloads in 1 MB blocks. Measured (MAX_CHUNK_MB=64): coordinator ~58 MB, node ~50 MB, flat over repeated uploads.
+
+Memory watch: GET <coordinator>/healthz returns {"version","rss_mb"} (live memory in MB). MAX_PARALLEL_UPLOADS (default 2) limits chunks processed at once.
+The browser polls every 3 s, waits for each answer before asking again, and pauses in background tabs.

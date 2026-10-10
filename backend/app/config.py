@@ -13,5 +13,6 @@ DATA_DIR = os.getenv("DATA_DIR", ".")                       # point at a persist
 DB_PATH = os.path.join(DATA_DIR, "folio.db")
 NODE_CONNECT_TIMEOUT = float(os.getenv("NODE_CONNECT_TIMEOUT", "2"))   # raise on free hosts (cold starts)
 PING_TIMEOUT = float(os.getenv("PING_TIMEOUT", "5"))
+MAX_PARALLEL_UPLOADS = int(os.getenv("MAX_PARALLEL_UPLOADS", "2"))
 MB = 1 << 20
 SIZES = [s for s in (1, 2, 4, 8, 16, 32, 64) if s <= MAX_CHUNK_MB]

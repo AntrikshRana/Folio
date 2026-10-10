@@ -23,8 +23,13 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
     .then(r => { if (r.status === 404) { onLeave(); return null } return r.json() })
     .then(d => d && setInfo(d)).catch(() => {})
   useEffect(() => {
-    const poll = () => { loadNodes(); loadInfo() }
-    poll(); const t = setInterval(poll, 2000); return () => clearInterval(t)
+    let stop = false, timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      if (!document.hidden) await Promise.all([loadNodes(), loadInfo()])   // wait for the answers: slow servers never get a backlog
+      if (!stop) timer = setTimeout(tick, 3000)
+    }
+    tick()
+    return () => { stop = true; clearTimeout(timer) }
   }, [session.code])
 
   const patch = (id: string, f: (t: Transfer) => Partial<Transfer>) =>

@@ -1,5 +1,5 @@
 """Live view of the storage nodes: reachability, throughput, load, health checks, simulated failures."""
-import asyncio
+import asyncio, time
 import httpx
 from fastapi import HTTPException
 from . import config
@@ -30,8 +30,23 @@ async def ping(i: int) -> dict:
         up[url] = False
         return base
 
+_cache: tuple[float, list] = (0.0, [])
+_inflight: "asyncio.Future | None" = None
+
+async def _collect() -> list[dict]:
+    global _cache
+    res = await asyncio.gather(*(ping(i) for i in range(len(config.NODES))))
+    _cache = (time.monotonic(), res)
+    return res
+
 async def health() -> list[dict]:
-    return await asyncio.gather(*(ping(i) for i in range(len(config.NODES))))
+    """Shared by every viewer: cached for 3 s, and concurrent callers share a single round of pings."""
+    if _cache[1] and time.monotonic() - _cache[0] < 3:
+        return _cache[1]
+    global _inflight
+    if _inflight is None or _inflight.done():
+        _inflight = asyncio.ensure_future(_collect())
+    return await asyncio.shield(_inflight)
 
 async def refresh(indices) -> None:
     await asyncio.gather(*(ping(i) for i in set(indices)))
@@ -44,4 +59,6 @@ async def admin(i: int, action: str) -> dict:
     except Exception:
         raise HTTPException(502, "node process is unreachable")
     up[config.NODES[i]] = action == "recover"
+    global _cache
+    _cache = (0.0, [])                                        # next poll shows the change immediately
     return {"ok": True, "node": i, "action": action}
