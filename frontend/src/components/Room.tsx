@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { post, url } from '../api'
 import { DEMOS, demoFile } from '../demo'
 import type { NodeInfo, Session, SessionInfo, Transfer } from '../types'
@@ -30,18 +30,33 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
   const patch = (id: string, f: (t: Transfer) => Partial<Transfer>) =>
     setTransfers(ts => ts.map(t => (t.id === id ? { ...t, ...f(t) } : t)))
 
+  const aborts = useRef<Record<string, AbortController>>({})
+  const removeUpload = (fid?: string) => fid
+    ? fetch(url(`/upload/${fid}`), { method: 'DELETE', headers: { 'X-Host-Token': session.hostToken ?? '' } }).catch(() => {})
+    : Promise.resolve()
+  const cancel = async (t: Transfer) => {
+    aborts.current[t.id]?.abort()                         // stop sending chunks right now
+    patch(t.id, () => ({ label: 'cancelling…' }))
+    await removeUpload(t.fid)                             // server deletes records + chunk bytes on the nodes
+    patch(t.id, () => ({ ended: true, cancelled: true, label: 'cancelled – chunks removed' }))
+  }
+
   async function upload(file: File) {
-    const key = crypto.randomUUID(), m = mode, fixed = SIZES[fixedIdx]
+    const key = crypto.randomUUID(), m = mode, fixed = SIZES[fixedIdx], ctrl = new AbortController()
+    aborts.current[key] = ctrl
+    let fid: string | undefined
     setTransfers(ts => [{ id: key, name: file.name, size: file.size, sent: 0, chunks: [], label: 'starting…', done: false }, ...ts])
     try {
       const ir = await post('/upload/init', { session: session.code, filename: file.name, size: file.size, mode: m, chunk_size_mb: fixed }, session.hostToken)
       const init = await ir.json()
       if (!ir.ok) throw new Error(typeof init.detail === 'string' ? init.detail : 'init failed')
-      patch(key, () => ({ fid: init.upload_id }))
+      fid = init.upload_id
+      patch(key, () => ({ fid }))
+      if (ctrl.signal.aborted) { await removeUpload(fid); return }      // cancelled before the first chunk
       let off = 0, idx = 0, mb: number = init.chunk_size_mb
       while (off < file.size) {
         const blob = file.slice(off, off + mb * MB)
-        const r = await fetch(url(`/upload/${init.upload_id}/chunk/${idx}`), { method: 'PUT', body: blob })
+        const r = await fetch(url(`/upload/${init.upload_id}/chunk/${idx}`), { method: 'PUT', body: blob, signal: ctrl.signal })
         if (!r.ok) throw new Error((await r.json()).detail ?? 'chunk failed')
         const a = await r.json()
         off += blob.size; idx++
@@ -50,10 +65,13 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
       }
       const c = await post(`/upload/${init.upload_id}/complete`)
       if (!c.ok) throw new Error((await c.json()).detail)
-      patch(key, t => ({ done: true, label: `${t.chunks.length} chunks stored` }))
+      if (ctrl.signal.aborted) return
+      patch(key, t => ({ done: true, ended: true, label: `${t.chunks.length} chunks stored` }))
       loadInfo()
     } catch (e) {
-      patch(key, () => ({ label: 'failed: ' + (e as Error).message }))
+      if (ctrl.signal.aborted) return                     // cancel() already handled cleanup and the label
+      patch(key, () => ({ ended: true, label: 'failed: ' + (e as Error).message }))
+      removeUpload(fid)                                   // don't leave a half-written file on the nodes
     }
   }
   const take = (fl: FileList | null) => fl && Array.from(fl).forEach(upload)
@@ -147,7 +165,7 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
             {transfers.map(t => {
               const p = Math.min(100, (t.sent / t.size) * 100)
               return (
-                <article key={t.id} className={'sheet file' + (t.done ? ' done' : '')}>
+                <article key={t.id} className={'sheet file' + (t.done || t.cancelled ? ' done' : '') + (t.cancelled ? ' cancelled' : '')}>
                   <div className="tape" />
                   <div className="fh"><h3>{t.name}</h3><span className="chip">{t.label}</span></div>
                   <div className="pbar"><span style={{ width: p + '%' }} /></div>
@@ -158,7 +176,11 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
                       <u key={i} title={fmt(c.size)} style={{ width: 8 + Math.log2(c.size / MB + 1) * 5, '--c': `var(--n${c.node % 4})` } as CSSProperties} />
                     ))}
                   </div>
-                  <div className="done-stamp">STORED</div>
+                  <div className="file-actions">
+                    {!t.ended && <button className="mini cancel" onClick={() => cancel(t)}>Cancel upload</button>}
+                    {t.ended && !t.done && <button className="mini dismiss" onClick={() => setTransfers(ts => ts.filter(x => x.id !== t.id))}>Dismiss</button>}
+                  </div>
+                  <div className="done-stamp">{t.cancelled ? 'CANCELLED' : 'STORED'}</div>
                 </article>
               )
             })}

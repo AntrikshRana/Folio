@@ -52,3 +52,10 @@ no per-chunk checksums; the coordinator relays chunk bytes (a bottleneck at scal
 
 Cold-start settings (Render free plan): NODE_CONNECT_TIMEOUT, PING_TIMEOUT (seconds, defaults 2 / 5; render.yaml sets 30).
 "Failed to fetch" checklist: open <coordinator>/healthz; check VITE_API_URL (needs a rebuild); CORS_ORIGINS="*" is the simplest.
+
+DELETE /upload/{id} (X-Host-Token) cancels/deletes a file: removes its rows and best-effort deletes chunk bytes from the nodes.
+
+## Memory (Render free = 512 MB per service)
+Chunks are streamed through disk/small blocks, never held whole in RAM: a node writes uploads to disk as they arrive and
+serves downloads with FileResponse; the coordinator spools each incoming chunk to a temp file, forwards it from disk, and
+relays downloads in 1 MB blocks. Measured (MAX_CHUNK_MB=64): coordinator ~58 MB, node ~50 MB, flat over repeated uploads.

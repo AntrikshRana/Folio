@@ -143,3 +143,9 @@ a.btn{text-decoration:none;display:inline-block}
 .who{background:var(--paper2);border:1px solid var(--line);padding:3px 12px;border-radius:999px;font-weight:600}
 .who small{margin-left:6px;color:var(--ink2);font-weight:400}
 .who.host{background:var(--hl);color:var(--ink)}
+
+/* cancel */
+.file-actions{display:flex;gap:10px;margin-top:6px}
+.mini.cancel{--c:var(--red)}
+.mini.dismiss{--c:var(--ink2)}
+.file.cancelled .done-stamp{color:var(--red);border-color:var(--red)}

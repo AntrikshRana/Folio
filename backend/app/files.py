@@ -31,14 +31,20 @@ async def lost_chunks(plan) -> list[int]:
     return [idx for idx, ns in plan if not any(pool.up[config.NODES[n]] for n in ns)]
 
 async def stream(file_id: str, plan):
+    """Pass chunk bytes through in 1 MB blocks; never hold a whole chunk in memory."""
     for idx, ns in plan:
         for n in sorted(ns, key=lambda n: not pool.up[config.NODES[n]]):     # any surviving replica will do
+            started = False
             try:
-                r = await pool.client.get(f"{config.NODES[n]}/chunks/{file_id}/{idx}")
-                r.raise_for_status()
-                yield r.content
+                async with pool.client.stream("GET", f"{config.NODES[n]}/chunks/{file_id}/{idx}") as r:
+                    r.raise_for_status()
+                    async for part in r.aiter_bytes(config.MB):
+                        started = True
+                        yield part
                 break
             except Exception:
                 pool.up[config.NODES[n]] = False
+                if started:                                                  # switching replica mid-chunk would corrupt the file
+                    raise
         else:
             raise RuntimeError("chunk lost mid-download")
