@@ -32,3 +32,11 @@ POST /sessions {name} → {code, host_token}        POST /sessions/{code}/join {
 GET  /sessions/{code} → members + files           GET  /sessions/{code}/files/{id}/download
 POST /upload/init (X-Host-Token) · PUT /upload/{id}/chunk/{i} · POST /upload/{id}/complete
 GET  /nodes/health · POST /nodes/{i}/fail|recover (host only) · GET /healthz
+
+## Links
+
+Folio -> https://folio-fc3b.onrender.com
+Coordinator -> https://folio-coordinator.onrender.com
+Node-1 -> https://folio-node-1.onrender.com
+Node-2 -> https://folio-node-2.onrender.com
+Node-3 -> https://folio-node-3.onrender.com
