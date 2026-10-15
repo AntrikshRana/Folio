@@ -140,24 +140,10 @@ The core SQLite schema is defined in `db.py`. Divide ownership by table so that 
 
 Member 4 owns the queries and retrieval logic, not a redundant new set of database tables. All four members should understand the overall schema and how their tables relate.
 
-## 4. AI-Assisted UI Design
-
-Be transparent in the project report and presentation. The following statement can be used, provided it accurately reflects the team's work:
-
-> **UI/UX Design and Implementation**
->
-> The initial user-interface design was created with the assistance of an AI tool. The team integrated the interface with the FastAPI backend, connected the frontend components to the system APIs, handled application state and error cases, and validated the complete user workflow. Each member contributed to the frontend integration of their assigned module.
-
-Only claim integration and validation work that the team actually performs. AI assistance with the design does not diminish the OS and DBMS implementation, which is the main technical contribution of this project.
-
-## 5. Suggested Implementation Order
+## 4. Suggested Implementation Order
 
 1. **Agree on API contracts and the database schema.** All members agree on request/response formats, table ownership, and error handling before coding in parallel.
 2. **Develop the four modules independently.** Use separate Git branches and small commits; avoid having multiple people edit `db.py` or the same route at the same time.
 3. **Integrate the backend.** Verify that upload, replication, sessions, and download work together.
 4. **Connect the AI-designed UI.** Each member integrates and tests the frontend portion associated with their module.
 5. **Run a shared demonstration.** Upload a file, show chunks and replicas, simulate a node failure, verify availability, and download the original file.
-
-## Recommendation
-
-Present Folio as a distributed file-sharing system that combines OS-level storage and I/O management with DBMS-backed metadata and integrity. The strongest demonstration is to show what happens to file availability when a storage node fails—not just to show the UI.
