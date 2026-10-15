@@ -1,6 +1,6 @@
 import secrets
 from fastapi import Header, HTTPException
-from . import db
+from . import config, db
 
 def get_session(c, code: str):
     row = c.execute("SELECT * FROM sessions WHERE code=? AND expires_at > datetime('now')", (code.strip().upper(),)).fetchone()
@@ -18,3 +18,7 @@ def require_any_host(x_host_token: str | None = Header(None)) -> None:
             "SELECT 1 FROM sessions WHERE host_token=? AND expires_at > datetime('now')", (x_host_token,)).fetchone()
     if not ok:
         raise HTTPException(403, "host token required")
+
+def require_simulation() -> None:
+    if not config.ALLOW_SIMULATION:
+        raise HTTPException(403, "failure simulation is disabled on this server")

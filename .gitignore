@@ -7,4 +7,3 @@ backend/data/
 *.db-wal
 *.db-shm
 .env
-work.md

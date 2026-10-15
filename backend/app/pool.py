@@ -4,7 +4,8 @@ import httpx
 from fastapi import HTTPException
 from . import config
 
-client = httpx.AsyncClient(timeout=httpx.Timeout(60, connect=config.NODE_CONNECT_TIMEOUT))
+client = httpx.AsyncClient(timeout=httpx.Timeout(60, connect=config.NODE_CONNECT_TIMEOUT),
+                           headers={"X-Node-Secret": config.NODE_SECRET} if config.NODE_SECRET else {})   # proves we are the coordinator
 up = {u: True for u in config.NODES}       # last known reachability
 tp = {u: 20.0 for u in config.NODES}       # smoothed throughput per node, MB/s
 held = [0] * len(config.NODES)             # replicas placed per node (restored from the DB at startup)
@@ -52,6 +53,8 @@ async def refresh(indices) -> None:
     await asyncio.gather(*(ping(i) for i in set(indices)))
 
 async def admin(i: int, action: str) -> dict:
+    if not config.ALLOW_SIMULATION:
+        raise HTTPException(403, "failure simulation is disabled on this server")
     if not 0 <= i < len(config.NODES):
         raise HTTPException(404, "no such node")
     try:

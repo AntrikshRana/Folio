@@ -17,6 +17,8 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
   const [fixedIdx, setFixedIdx] = useState(3)
   const [over, setOver] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [sim, setSim] = useState(false)                     // server allows the failure-simulation buttons?
+  useEffect(() => { fetch(url('/config')).then(r => r.json()).then(c => setSim(!!c.simulation)).catch(() => {}) }, [])
 
   const loadNodes = () => fetch(url('/nodes/health')).then(r => r.json()).then(setNodes).catch(() => setNodes([]))
   const loadInfo = () => fetch(url(`/sessions/${session.code}`))
@@ -151,7 +153,7 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
                 <h3>{n.name}</h3><small>{n.url}</small>
                 <div className="bar"><span style={{ width: Math.min(100, n.throughput_mbps) + '%' }} /></div>
                 <div className="meta"><span>{n.online ? Math.round(n.throughput_mbps) + ' MB/s' : 'unreachable'}</span><span>{n.chunks} chunks held</span></div>
-                {isHost && (
+                {isHost && sim && (
                   <button className="mini" disabled={!n.online && !n.failed}
                     onClick={() => post(`/nodes/${n.id}/${n.failed ? 'recover' : 'fail'}`, undefined, session.hostToken).then(loadNodes)}>
                     {n.failed ? 'Recover node' : 'Simulate failure'}

@@ -32,3 +32,7 @@ def _rss_mb():
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "version": "streaming-2", "rss_mb": _rss_mb()}
+
+@app.get("/config")
+def public_config():
+    return {"simulation": config.ALLOW_SIMULATION}      # lets the UI hide buttons the server would reject

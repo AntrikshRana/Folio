@@ -1,121 +1,69 @@
-# Folio
+# Folio – distributed chunked file sharing
 
-Folio is a distributed, chunked file-sharing app. A host creates a session, uploads a file, and the backend splits it across multiple storage nodes for replication and fault tolerance. Guests join using a short session code and can download the reconstructed file from the coordinator.
+React UI  →  FastAPI coordinator (+ SQLite metadata)  →  FastAPI storage nodes.
+Hosts upload big files in adaptive chunks (replicated on 2 nodes); guests join with a code and download.
 
-## Overview
+## Structure
+    render.yaml                  Render Blueprint (static site + coordinator + 3 nodes)
+    backend/
+      requirements.txt
+      run_local.py               starts 3 nodes + coordinator for local dev
+      app/
+        config.py                every setting is an environment variable
+        db.py                    SQLite schema + migrations
+        pool.py                  node state: health, throughput, load, simulated failures
+        auth.py                  session / host-token checks
+        files.py                 file listing, chunk plan, streaming download
+        coordinator.py           FastAPI app (uvicorn app.coordinator:app)
+        node.py                  storage node (uvicorn app.node:app)
+        routes/ upload.py  sessions.py  nodes.py
+    frontend/
+      src/ App.tsx  api.ts  types.ts  demo.ts  components/{SessionGate,Room}.tsx
 
-- Frontend: React + TypeScript + Vite
-- Backend: Python + FastAPI
-- Metadata store: SQLite
-- Storage layer: three FastAPI node services that hold chunk replicas
-- Deployment pattern: one coordinator service plus multiple storage nodes
+## Run locally (Python 3.10+, Node 18+)
+    cd backend && python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
+    pip install -r requirements.txt && python run_local.py
+    # new terminal
+    cd frontend && npm install && npm run dev        # http://localhost:5173
+Other devices on your Wi-Fi can join at http://<your-LAN-IP>:5173 (dev server runs with --host).
 
-The architecture is intentionally simple:
+## Deploy on Render
+1. Push this folder to a GitHub repo (render.yaml must be in the repo root).
+2. Render dashboard → New → Blueprint → select the repo → Apply.
+3. Check the real service URLs. If Render added suffixes, update NODES, CORS_ORIGINS and VITE_API_URL
+   in render.yaml (or the dashboard) and redeploy.
+4. Open the static site URL, start a session, share the code.
+Free-plan caveats: services sleep when idle (first request is slow), and the filesystem is ephemeral – uploaded
+chunks and the SQLite file are lost on restart/redeploy. For durable data use paid instances with a disk
+(set DATA_DIR / NODE_DIR to the disk's mount path).
 
-React UI → FastAPI coordinator → SQLite metadata + chunk placement decisions → storage nodes
+## Security settings
+NODE_SECRET (required; same value on the coordinator and every node, sent as `X-Node-Secret`; Render Blueprint generates it),
+ALLOW_SIMULATION (0/1, default 0; enables the Simulate-failure buttons), FOLIO_DEV=1 (local dev only: allows running without a secret).
+Nodes reject every request lacking the secret except `GET /ping` (liveness probe, used by Render's health check).
 
-## Why this project exists
+## Settings (env vars)
+NODES, CORS_ORIGINS, REPLICAS (2), MAX_CHUNK_MB (64), SESSION_TTL_HOURS (24), DATA_DIR, NODE_NAME, NODE_DIR, VITE_API_URL (frontend build)
 
-The app demonstrates:
+## API (coordinator)
+POST /sessions {name} → {code, host_token}        POST /sessions/{code}/join {name}
+GET  /sessions/{code} → members + files           GET  /sessions/{code}/files/{id}/download
+POST /upload/init (X-Host-Token) · PUT /upload/{id}/chunk/{i} · POST /upload/{id}/complete
+GET  /nodes/health · POST /nodes/{i}/fail|recover (host only) · GET /healthz
 
-- chunked upload and download workflows
-- distributed storage with replica placement
-- session-based collaboration and host authorization
-- node health checks and simulated failure handling
-- end-to-end file sharing over a lightweight web app
+## Known limits
+No automatic re-replication after a failure; deleted/expired sessions leave orphaned chunk bytes on nodes;
+no per-chunk checksums; the coordinator relays chunk bytes (a bottleneck at scale).
 
-## Repository layout
+Cold-start settings (Render free plan): NODE_CONNECT_TIMEOUT, PING_TIMEOUT (seconds, defaults 2 / 5; render.yaml sets 30).
+"Failed to fetch" checklist: open <coordinator>/healthz; check VITE_API_URL (needs a rebuild); CORS_ORIGINS="*" is the simplest.
 
-```text
-backend/
-  app/
-    auth.py
-    config.py
-    coordinator.py
-    db.py
-    files.py
-    node.py
-    pool.py
-    routes/
-      nodes.py
-      sessions.py
-      upload.py
-  requirements.txt
-  run_local.py
-frontend/
-  src/
-  package.json
-  vite.config.ts
-render.yaml
-README.md
-work.md
-```
+DELETE /upload/{id} (X-Host-Token) cancels/deletes a file: removes its rows and best-effort deletes chunk bytes from the nodes.
 
-## Documentation
+## Memory (Render free = 512 MB per service)
+Chunks are streamed through disk/small blocks, never held whole in RAM: a node writes uploads to disk as they arrive and
+serves downloads with FileResponse; the coordinator spools each incoming chunk to a temp file, forwards it from disk, and
+relays downloads in 1 MB blocks. Measured (MAX_CHUNK_MB=64): coordinator ~58 MB, node ~50 MB, flat over repeated uploads.
 
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — system design, flow, and key modules
-- [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) — local setup, environment variables, and troubleshooting
-- [docs/API.md](./docs/API.md) — coordinator API reference and request examples
-
-## Quick start
-
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+
-- npm
-
-### Local development
-
-```bash
-cd backend
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-pip install -r requirements.txt
-python run_local.py
-```
-
-In another terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Then open the frontend at `http://localhost:5173`.
-
-Other machines on the same network can reach the Vite app via the LAN IP shown by Vite, usually `http://<your-ip>:5173`.
-
-## Core runtime configuration
-
-Most configuration is driven by environment variables in `backend/app/config.py`:
-
-- `NODES` — comma-separated storage node URLs
-- `REPLICAS` — number of copies to keep for each chunk
-- `MAX_CHUNK_MB` — upper bound for chunk size
-- `SESSION_TTL_HOURS` — session lifetime
-- `DATA_DIR` — directory for the SQLite database
-- `CORS_ORIGINS` — allowed origins for the coordinator
-- `NODE_CONNECT_TIMEOUT` / `PING_TIMEOUT` — network timeout tuning
-
-## Deployment
-
-The repository includes a Render blueprint in [render.yaml](./render.yaml). It provisions:
-
-- one static frontend service
-- one coordinator service
-- three storage node services
-
-See [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for deployment notes.
-
-## Project links
-
-- Folio: https://folio-fc3b.onrender.com
-- Coordinator: https://folio-coordinator.onrender.com
-- Node 1: https://folio-node-1.onrender.com
-- Node 2: https://folio-node-2.onrender.com
-- Node 3: https://folio-node-3.onrender.com
+Memory watch: GET <coordinator>/healthz returns {"version","rss_mb"} (live memory in MB). MAX_PARALLEL_UPLOADS (default 2) limits chunks processed at once.
+The browser polls every 3 s, waits for each answer before asking again, and pauses in background tabs.

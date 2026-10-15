@@ -14,5 +14,13 @@ DB_PATH = os.path.join(DATA_DIR, "folio.db")
 NODE_CONNECT_TIMEOUT = float(os.getenv("NODE_CONNECT_TIMEOUT", "2"))   # raise on free hosts (cold starts)
 PING_TIMEOUT = float(os.getenv("PING_TIMEOUT", "5"))
 MAX_PARALLEL_UPLOADS = int(os.getenv("MAX_PARALLEL_UPLOADS", "2"))
+
+# --- security -------------------------------------------------------------------------------------
+NODE_SECRET = os.getenv("NODE_SECRET", "")                   # shared by the coordinator and every node
+DEV = os.getenv("FOLIO_DEV") == "1"                          # local development: allows running without a secret
+ALLOW_SIMULATION = os.getenv("ALLOW_SIMULATION", "0") == "1" # "Simulate failure" buttons; off unless enabled
+if not NODE_SECRET and not DEV:
+    raise RuntimeError("NODE_SECRET is not set. Set the same random value on the coordinator and all nodes "
+                       "(or set FOLIO_DEV=1 for local development only).")
 MB = 1 << 20
 SIZES = [s for s in (1, 2, 4, 8, 16, 32, 64) if s <= MAX_CHUNK_MB]

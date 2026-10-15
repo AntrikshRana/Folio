@@ -1,5 +1,5 @@
 """Storage node:  uvicorn app.node:app   (run several, each with its own NODE_NAME / NODE_DIR)."""
-import os, re, shutil
+import os, re, secrets, shutil
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -13,13 +13,28 @@ def _dir(fid: str) -> Path:
         raise HTTPException(400, "bad file id")
     return ROOT / fid
 
-failed = False   # simulated failure: every route except /admin answers 503
+SECRET = os.getenv("NODE_SECRET", "")
+if not SECRET and os.getenv("FOLIO_DEV") != "1":
+    raise RuntimeError("NODE_SECRET is not set. Use the same value as the coordinator (or FOLIO_DEV=1 for local dev only).")
+
+failed = False   # simulated failure: every route except /admin and /ping answers 503
 
 @app.middleware("http")
-async def simulate_failure(request: Request, call_next):
-    if failed and not request.url.path.startswith("/admin"):
+async def guard(request: Request, call_next):
+    path = request.url.path
+    if path == "/ping":                                   # unauthenticated liveness probe for the hosting platform; reveals nothing
+        return await call_next(request)
+    if SECRET:                                            # everything else is for the coordinator only
+        given = request.headers.get("x-node-secret", "")
+        if not secrets.compare_digest(given.encode(), SECRET.encode()):
+            return JSONResponse({"detail": "forbidden"}, status_code=403)
+    if failed and not path.startswith("/admin"):
         return JSONResponse({"detail": "simulated node failure"}, status_code=503)
     return await call_next(request)
+
+@app.get("/ping")
+def ping():
+    return {"ok": True}
 
 @app.post("/admin/fail")
 def admin_fail():
