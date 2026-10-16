@@ -40,7 +40,7 @@ async def _spool(request: Request):
 
 async def _send(tmp):
     tmp.seek(0)
-    while block := tmp.read(config.MB):
+    while block := tmp.read(config.RELAY_BLOCK):
         yield block
 
 _slots = asyncio.Semaphore(config.MAX_PARALLEL_UPLOADS)

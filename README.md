@@ -42,6 +42,10 @@ NODE_SECRET (required; same value on the coordinator and every node, sent as `X-
 ALLOW_SIMULATION (0/1, default 0; enables the Simulate-failure buttons), FOLIO_DEV=1 (local dev only: allows running without a secret).
 Nodes reject every request lacking the secret except `GET /ping` (liveness probe, used by Render's health check).
 
+## Memory settings
+RELAY_BLOCK_KB (default 256), MAX_PARALLEL_DOWNLOADS (default 4; extra downloads wait for a slot), MAX_NODE_CONNECTIONS (default 20),
+and `MALLOC_ARENA_MAX=2` (set in render.yaml) keep the coordinator's RAM small and flat.
+
 ## Settings (env vars)
 NODES, CORS_ORIGINS, REPLICAS (2), MAX_CHUNK_MB (64), SESSION_TTL_HOURS (24), DATA_DIR, NODE_NAME, NODE_DIR, VITE_API_URL (frontend build)
 

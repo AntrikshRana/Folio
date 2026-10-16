@@ -19,6 +19,7 @@ services:
     healthCheckPath: /ping                            # open liveness probe; /health needs the secret
     envVars:
       - fromGroup: folio-secrets
+      - { key: MALLOC_ARENA_MAX, value: "2" }          # fewer glibc arenas = less RSS fragmentation
       - { key: NODE_NAME, value: node-alpha }
       - { key: NODE_DIR, value: /tmp/chunks }        # ephemeral on the free plan; use a disk mount for persistence
 
@@ -32,6 +33,7 @@ services:
     healthCheckPath: /ping                            # open liveness probe; /health needs the secret
     envVars:
       - fromGroup: folio-secrets
+      - { key: MALLOC_ARENA_MAX, value: "2" }          # fewer glibc arenas = less RSS fragmentation
       - { key: NODE_NAME, value: node-bravo }
       - { key: NODE_DIR, value: /tmp/chunks }
 
@@ -45,6 +47,7 @@ services:
     healthCheckPath: /ping                            # open liveness probe; /health needs the secret
     envVars:
       - fromGroup: folio-secrets
+      - { key: MALLOC_ARENA_MAX, value: "2" }          # fewer glibc arenas = less RSS fragmentation
       - { key: NODE_NAME, value: node-charlie }
       - { key: NODE_DIR, value: /tmp/chunks }
 
@@ -58,6 +61,7 @@ services:
     healthCheckPath: /healthz
     envVars:
       - fromGroup: folio-secrets
+      - { key: MALLOC_ARENA_MAX, value: "2" }          # fewer glibc arenas = less RSS fragmentation
       - { key: ALLOW_SIMULATION, value: "1" }       # set to "0" to hide/disable the Simulate-failure buttons on a public deploy
       - key: NODES                                    # public URLs of the three nodes, comma separated
         value: https://folio-node-1.onrender.com,https://folio-node-2.onrender.com,https://folio-node-3.onrender.com

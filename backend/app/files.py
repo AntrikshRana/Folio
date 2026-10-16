@@ -1,5 +1,8 @@
 """File queries and chunk streaming shared by the routes."""
+import asyncio
 from . import config, pool
+
+_dl_slots = asyncio.Semaphore(config.MAX_PARALLEL_DOWNLOADS)   # bounds simultaneous relays (each holds a few buffers)
 
 def list_files(c, session_id: str) -> list[dict]:
     online = [i for i, u in enumerate(config.NODES) if pool.up[u]]
@@ -31,14 +34,20 @@ async def lost_chunks(plan) -> list[int]:
     return [idx for idx, ns in plan if not any(pool.up[config.NODES[n]] for n in ns)]
 
 async def stream(file_id: str, plan):
-    """Pass chunk bytes through in 1 MB blocks; never hold a whole chunk in memory."""
+    """Wait for a free download slot, then relay. Released on finish, error or client disconnect."""
+    async with _dl_slots:
+        async for part in _relay(file_id, plan):
+            yield part
+
+async def _relay(file_id: str, plan):
+    """Pass chunk bytes through in small blocks; never hold a whole chunk in memory."""
     for idx, ns in plan:
         for n in sorted(ns, key=lambda n: not pool.up[config.NODES[n]]):     # any surviving replica will do
             started = False
             try:
                 async with pool.client.stream("GET", f"{config.NODES[n]}/chunks/{file_id}/{idx}") as r:
                     r.raise_for_status()
-                    async for part in r.aiter_bytes(config.MB):
+                    async for part in r.aiter_bytes(config.RELAY_BLOCK):
                         started = True
                         yield part
                 break

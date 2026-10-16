@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from . import config
 
 client = httpx.AsyncClient(timeout=httpx.Timeout(60, connect=config.NODE_CONNECT_TIMEOUT),
+                           limits=httpx.Limits(max_connections=config.MAX_NODE_CONNECTIONS, max_keepalive_connections=5),
                            headers={"X-Node-Secret": config.NODE_SECRET} if config.NODE_SECRET else {})   # proves we are the coordinator
 up = {u: True for u in config.NODES}       # last known reachability
 tp = {u: 20.0 for u in config.NODES}       # smoothed throughput per node, MB/s

@@ -1,5 +1,5 @@
 """Storage node:  uvicorn app.node:app   (run several, each with its own NODE_NAME / NODE_DIR)."""
-import os, re, secrets, shutil
+import os, re, secrets, shutil, threading
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -7,6 +7,9 @@ from fastapi.responses import FileResponse, JSONResponse
 NAME = os.getenv("NODE_NAME", "node")
 ROOT = Path(os.getenv("NODE_DIR", "data/node")); ROOT.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title=f"Folio {NAME}")
+
+_count_lock = threading.Lock()
+_count = sum(1 for _ in ROOT.rglob("*.part"))   # scanned once at startup, then kept up to date on put/delete
 
 def _dir(fid: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{32}", fid):
@@ -46,7 +49,7 @@ def admin_recover():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "name": NAME, "chunks": sum(1 for _ in ROOT.rglob("*.part"))}
+    return {"ok": True, "name": NAME, "chunks": _count}
 
 @app.put("/chunks/{fid}/{idx}")
 async def put_chunk(fid: str, idx: int, request: Request):
@@ -55,7 +58,12 @@ async def put_chunk(fid: str, idx: int, request: Request):
     with open(tmp, "wb") as f:                       # write as bytes arrive: memory stays flat for any chunk size
         async for part in request.stream():
             f.write(part); size += len(part)
-    os.replace(tmp, d / f"{idx}.part")               # atomic: readers never see a half-written chunk
+    final = d / f"{idx}.part"
+    is_new = not final.exists()
+    os.replace(tmp, final)                           # atomic: readers never see a half-written chunk
+    if is_new:
+        global _count
+        with _count_lock: _count += 1
     return {"stored": idx, "size": size}
 
 @app.get("/chunks/{fid}/{idx}")
@@ -67,5 +75,9 @@ def get_chunk(fid: str, idx: int):
 
 @app.delete("/chunks/{fid}")
 def delete_chunks(fid: str):
-    shutil.rmtree(_dir(fid), ignore_errors=True)
+    d = _dir(fid)
+    n = sum(1 for _ in d.glob("*.part")) if d.exists() else 0
+    shutil.rmtree(d, ignore_errors=True)
+    global _count
+    with _count_lock: _count = max(0, _count - n)   # display-only; a restart re-syncs it from disk
     return {"deleted": fid}

@@ -6,7 +6,6 @@ import type { NodeInfo, Session, SessionInfo, Transfer } from '../types'
 const MB = 1048576
 const SIZES = [1, 2, 4, 8, 16, 32, 64]
 const fmt = (b: number) => (b >= 1024 * MB ? (b / 1024 / MB).toFixed(2) + ' GB' : (b / MB).toFixed(1) + ' MB')
-const copies = (cs: Transfer['chunks']) => cs.reduce((m, c) => Math.min(m, c.replicas), Infinity)
 
 export default function Room({ session, onLeave }: { session: Session; onLeave: () => void }) {
   const isHost = !!session.hostToken
@@ -52,7 +51,7 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
     const key = crypto.randomUUID(), m = mode, fixed = SIZES[fixedIdx], ctrl = new AbortController()
     aborts.current[key] = ctrl
     let fid: string | undefined
-    setTransfers(ts => [{ id: key, name: file.name, size: file.size, sent: 0, chunks: [], label: 'starting…', done: false }, ...ts])
+    setTransfers(ts => [{ id: key, name: file.name, size: file.size, sent: 0, chunks: [], count: 0, minCopies: Infinity, label: 'starting…', done: false }, ...ts])
     try {
       const ir = await post('/upload/init', { session: session.code, filename: file.name, size: file.size, mode: m, chunk_size_mb: fixed }, session.hostToken)
       const init = await ir.json()
@@ -68,12 +67,12 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
         const a = await r.json()
         off += blob.size; idx++
         mb = m === 'auto' ? a.next_chunk_size_mb : init.chunk_size_mb
-        patch(key, t => ({ sent: off, chunks: [...t.chunks, { size: blob.size, node: a.node_index, replicas: a.replicas }], label: `chunk size ${Math.round(blob.size / MB)} MB` }))
+        patch(key, t => ({ sent: off, chunks: [...t.chunks.slice(-499), { size: blob.size, node: a.node_index, replicas: a.replicas }], count: t.count + 1, minCopies: Math.min(t.minCopies, a.replicas), label: `chunk size ${Math.round(blob.size / MB)} MB` }))
       }
       const c = await post(`/upload/${init.upload_id}/complete`)
       if (!c.ok) throw new Error((await c.json()).detail)
       if (ctrl.signal.aborted) return
-      patch(key, t => ({ done: true, ended: true, label: `${t.chunks.length} chunks stored` }))
+      patch(key, t => ({ done: true, ended: true, label: `${t.count} chunks stored` }))
       loadInfo()
     } catch (e) {
       if (ctrl.signal.aborted) return                     // cancel() already handled cleanup and the label
@@ -177,9 +176,9 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
                   <div className="fh"><h3>{t.name}</h3><span className="chip">{t.label}</span></div>
                   <div className="pbar"><span style={{ width: p + '%' }} /></div>
                   <div className="meta"><span>{p.toFixed(0)}% · {fmt(t.sent)} of {fmt(t.size)}</span>
-                    <span>{t.chunks.length} chunks{t.chunks.length > 0 && ` · ×${copies(t.chunks)} copies`}</span></div>
+                    <span>{t.count} chunks{t.count > 0 && ` · ×${t.minCopies} copies`}</span></div>
                   <div className="chunks">
-                    {t.chunks.slice(-500).map((c, i) => (
+                    {t.chunks.map((c, i) => (
                       <u key={i} title={fmt(c.size)} style={{ width: 8 + Math.log2(c.size / MB + 1) * 5, '--c': `var(--n${c.node % 4})` } as CSSProperties} />
                     ))}
                   </div>

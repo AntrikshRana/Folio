@@ -23,4 +23,7 @@ if not NODE_SECRET and not DEV:
     raise RuntimeError("NODE_SECRET is not set. Set the same random value on the coordinator and all nodes "
                        "(or set FOLIO_DEV=1 for local development only).")
 MB = 1 << 20
+RELAY_BLOCK = int(os.getenv("RELAY_BLOCK_KB", "256")) * 1024          # bytes per read/write while relaying a chunk (smaller = lower peak RAM)
+MAX_PARALLEL_DOWNLOADS = int(os.getenv("MAX_PARALLEL_DOWNLOADS", "4")) # extra downloads wait their turn instead of piling up buffers
+MAX_NODE_CONNECTIONS = int(os.getenv("MAX_NODE_CONNECTIONS", "20"))    # upper bound on open sockets (and their buffers) to the nodes
 SIZES = [s for s in (1, 2, 4, 8, 16, 32, 64) if s <= MAX_CHUNK_MB]
