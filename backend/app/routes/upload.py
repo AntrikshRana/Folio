@@ -1,7 +1,7 @@
 import asyncio, sqlite3, tempfile, time, uuid
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
-from .. import config, db, pool
+from .. import config, db, pool, stats
 from ..auth import check_host, get_session
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -21,6 +21,7 @@ def upload_init(b: Init, x_host_token: str | None = Header(None)):
         check_host(s, x_host_token)                  # only the host uploads into a session
         c.execute("INSERT INTO files(id,session_id,filename,size,mode) VALUES(?,?,?,?,?)",
                   (uid, s["id"], b.filename, b.size, b.mode))
+    stats.record("upload_started", uid, size=b.size)
     first = min(4, config.MAX_CHUNK_MB) if b.mode == "auto" else max(1, min(b.chunk_size_mb, config.MAX_CHUNK_MB))
     return {"upload_id": uid, "replication": config.REPLICAS, "chunk_size_mb": first}
 
@@ -79,6 +80,7 @@ async def _handle_chunk(uid: str, idx: int, request: Request):
                 c.execute("DELETE FROM chunk_replicas WHERE file_id=? AND idx=?", (uid, idx))
                 c.execute("INSERT OR REPLACE INTO chunks(file_id,idx,size) VALUES(?,?,?)", (uid, idx, size))
                 c.executemany("INSERT INTO chunk_replicas(file_id,idx,node_id) VALUES(?,?,?)", [(uid, idx, i) for i in placed])
+            stats.record("chunk_stored", uid, idx, placed, size)
         except sqlite3.IntegrityError:               # the upload was cancelled while this chunk was in flight
             await asyncio.gather(*(pool.client.delete(f"{config.NODES[i]}/chunks/{uid}") for i in placed), return_exceptions=True)
             for i in placed:
@@ -100,6 +102,7 @@ def upload_complete(uid: str):
         if got != f["size"]:
             raise HTTPException(400, f"expected {f['size']} bytes, got {got}")
         c.execute("UPDATE files SET status='complete' WHERE id=?", (uid,))
+    stats.record("upload_completed", uid, size=got, detail=f"{n} chunks")
     return {"ok": True, "chunks": n}
 
 @router.delete("/{uid}")
@@ -115,6 +118,7 @@ async def cancel_upload(uid: str, x_host_token: str | None = Header(None)):
         check_host(s, x_host_token)
         holders = [r["node_id"] for r in c.execute("SELECT DISTINCT node_id FROM chunk_replicas WHERE file_id=?", (uid,))]
         c.execute("DELETE FROM files WHERE id=?", (uid,))   # cascades to chunks + chunk_replicas
+    stats.record("upload_cancelled", uid)
     await asyncio.gather(*(pool.client.delete(f"{config.NODES[i]}/chunks/{uid}", timeout=config.PING_TIMEOUT)
                            for i in holders), return_exceptions=True)
     return {"ok": True, "removed": True}

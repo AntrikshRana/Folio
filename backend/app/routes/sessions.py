@@ -3,7 +3,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from .. import config, db, files
+from .. import config, db, files, stats
 from ..auth import get_session
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -48,6 +48,7 @@ async def download(code: str, fid: str):
         plan = files.chunk_plan(c, fid) if f else []
     if not f:
         raise HTTPException(404, "file not in this session")
+    stats.record("download_started", fid, size=f["size"])
     lost = await files.lost_chunks(plan)
     if lost:                                         # fail before streaming so the browser gets a clean error
         raise HTTPException(503, f"{len(lost)} chunk(s) have no online copy – too many nodes are down")

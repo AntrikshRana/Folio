@@ -41,6 +41,17 @@ CREATE TABLE IF NOT EXISTS chunk_replicas (          -- one row per stored copy 
     PRIMARY KEY (file_id, idx, node_id),
     FOREIGN KEY (file_id, idx) REFERENCES chunks(file_id, idx) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS events (                  -- activity log behind the live stats page (trimmed in stats.py)
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts      REAL NOT NULL,
+    kind    TEXT NOT NULL,
+    file_id TEXT,                                    -- no FK: events outlive cancelled files
+    idx     INTEGER,
+    nodes   TEXT,
+    size    INTEGER,
+    detail  TEXT
+);
+CREATE TABLE IF NOT EXISTS stat_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_replicas_node ON chunk_replicas(node_id);
 CREATE INDEX IF NOT EXISTS idx_files_session ON files(session_id);
 """

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from . import config, db, pool
-from .routes import nodes, sessions, upload
+from .routes import live, nodes, sessions, upload
 
 @asynccontextmanager
 async def lifespan(_):
@@ -18,7 +18,7 @@ async def lifespan(_):
 
 app = FastAPI(title="Folio coordinator", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
-for r in (nodes.router, sessions.router, upload.router):
+for r in (nodes.router, sessions.router, upload.router, live.router):
     app.include_router(r)
 
 def _rss_mb():
@@ -31,7 +31,7 @@ def _rss_mb():
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "version": "streaming-2", "rss_mb": _rss_mb()}
+    return {"ok": True, "version": "streaming-3", "rss_mb": _rss_mb()}
 
 @app.get("/config")
 def public_config():

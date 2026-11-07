@@ -1,6 +1,6 @@
 """File queries and chunk streaming shared by the routes."""
 import asyncio
-from . import config, pool
+from . import config, pool, stats
 
 _dl_slots = asyncio.Semaphore(config.MAX_PARALLEL_DOWNLOADS)   # bounds simultaneous relays (each holds a few buffers)
 
@@ -50,9 +50,11 @@ async def _relay(file_id: str, plan):
                     async for part in r.aiter_bytes(config.RELAY_BLOCK):
                         started = True
                         yield part
+                stats.record("chunk_served", file_id, idx, [n])
                 break
             except Exception:
                 pool.up[config.NODES[n]] = False
+                stats.record("failover", file_id, idx, [n], detail="node failed mid-chunk, download stops" if started else "node failed, trying another copy")
                 if started:                                                  # switching replica mid-chunk would corrupt the file
                     raise
         else:
