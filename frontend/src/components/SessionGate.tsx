@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { API, post } from '../api'
-import type { Session } from '../types'
+import type { Rules, Session } from '../types'
+import { DEFAULT_RULES, RulesFields } from './Rules'
 
 export default function SessionGate({ onEnter }: { onEnter: (s: Session) => void }) {
   const invite = new URLSearchParams(location.search).get('join') ?? ''
@@ -9,6 +10,7 @@ export default function SessionGate({ onEnter }: { onEnter: (s: Session) => void
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [waking, setWaking] = useState(false)
+  const [rules, setRules] = useState<Rules>(DEFAULT_RULES)       // the teacher's choices for a new room
 
   async function go(kind: 'create' | 'join') {
     if (!name.trim()) return setErr('Please enter your name first.')
@@ -16,12 +18,12 @@ export default function SessionGate({ onEnter }: { onEnter: (s: Session) => void
     setBusy(true); setErr('')
     try {
       const r = kind === 'create'
-        ? await post('/sessions', { name: name.trim() }, undefined, () => setWaking(true))
+        ? await post('/sessions', { name: name.trim(), ...rules }, undefined, () => setWaking(true))
         : await post(`/sessions/${encodeURIComponent(code.trim())}/join`, { name: name.trim() }, undefined, () => setWaking(true))
       const d = await r.json()
       if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Could not continue')
       history.replaceState(null, '', location.pathname)
-      onEnter({ code: d.code, name: name.trim(), hostToken: d.host_token })
+      onEnter({ code: d.code, name: d.name ?? name.trim(), hostToken: d.host_token, memberToken: d.member_token, memberId: d.member_id })   // the server may add "(2)" to a taken name
     } catch (e) {
       if (e instanceof TypeError) {            // the browser never got an answer
         setErr(`Can't reach the server at ${API}. ` + (import.meta.env.PROD && API === '/api'
@@ -41,7 +43,8 @@ export default function SessionGate({ onEnter }: { onEnter: (s: Session) => void
       <div className="gate-cols">
         <section className="sheet">
           <h2>Start a session</h2>
-          <p className="hint">You become the host: upload files, then share the code so others can download them.</p>
+          <p className="hint">You become the host (the teacher). Choose the rules, then share the code so others can join.</p>
+          <RulesFields value={rules} onChange={p => setRules(r => ({ ...r, ...p }))} />
           <button className="btn" disabled={busy} onClick={() => go('create')}>Start session</button>
         </section>
         <section className="sheet">

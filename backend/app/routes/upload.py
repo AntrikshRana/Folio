@@ -1,31 +1,46 @@
 import asyncio, sqlite3, tempfile, time, uuid
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel
-from .. import config, db, pool, stats
-from ..auth import check_host, get_session
+from pydantic import BaseModel, Field
+from .. import config, db, files, pool, stats
+from ..auth import file_access, get_session, identify, require_uploader
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
 class Init(BaseModel):
     session: str
-    filename: str
-    size: int
+    filename: str = Field(min_length=1, max_length=255)
+    size: int = Field(ge=0)
     mode: str = "auto"          # "auto" | "fixed"
     chunk_size_mb: int = 8
 
+def _check_limits(c, s, me, size: int) -> None:
+    mb = config.MB
+    if size > s["max_file_mb"] * mb:
+        raise HTTPException(413, f"this file is {size / mb:.1f} MB but the limit here is {s['max_file_mb']} MB per file")
+    n = c.execute(f"SELECT COUNT(*) FROM files WHERE session_id=? AND member_id=? AND {files.LIVE}", (s["id"], me["member_id"])).fetchone()[0]
+    if n >= s["max_files_per_guest"]:
+        raise HTTPException(403, f"you have reached the limit of {s['max_files_per_guest']} files per person")
+    used = c.execute(f"SELECT COALESCE(SUM(size),0) FROM files WHERE session_id=? AND {files.LIVE}", (s["id"],)).fetchone()[0]
+    if used + size > s["room_quota_mb"] * mb:
+        raise HTTPException(413, f"the room's storage ({s['room_quota_mb']} MB) would be exceeded")
+
 @router.post("/init")
-def upload_init(b: Init, x_host_token: str | None = Header(None)):
+def upload_init(b: Init, x_host_token: str | None = Header(None), x_member_token: str | None = Header(None)):
     uid = uuid.uuid4().hex
     with db.tx() as c:
+        c.execute("BEGIN IMMEDIATE")                          # the limit checks and the insert must happen as one step
         s = get_session(c, b.session)
-        check_host(s, x_host_token)                  # only the host uploads into a session
-        c.execute("INSERT INTO files(id,session_id,filename,size,mode) VALUES(?,?,?,?,?)",
-                  (uid, s["id"], b.filename, b.size, b.mode))
+        me = identify(c, s, x_member_token, x_host_token)     # who is asking?
+        require_uploader(s, me)                               # guests only if the teacher allowed them
+        if me["role"] != "host":                              # the teacher is exempt from the guest limits
+            _check_limits(c, s, me, b.size)
+        c.execute("INSERT INTO files(id,session_id,filename,size,mode,member_id) VALUES(?,?,?,?,?,?)",
+                  (uid, s["id"], b.filename, b.size, b.mode, me["member_id"]))
     stats.record("upload_started", uid, size=b.size)
     first = min(4, config.MAX_CHUNK_MB) if b.mode == "auto" else max(1, min(b.chunk_size_mb, config.MAX_CHUNK_MB))
     return {"upload_id": uid, "replication": config.REPLICAS, "chunk_size_mb": first}
 
-async def _spool(request: Request):
+async def _spool(request: Request, limit: int):
     """Receive the chunk into a temp file (RAM only up to 1 MB) so memory stays flat for any chunk size."""
     tmp, size = tempfile.SpooledTemporaryFile(max_size=config.MB), 0
     try:
@@ -33,6 +48,8 @@ async def _spool(request: Request):
             size += len(part)
             if size > config.MAX_CHUNK_MB * config.MB:
                 raise HTTPException(413, f"chunk larger than MAX_CHUNK_MB={config.MAX_CHUNK_MB}")
+            if size > limit:
+                raise HTTPException(413, "more data than the file size announced at the start")
             tmp.write(part)
     except BaseException:
         tmp.close()
@@ -47,16 +64,19 @@ async def _send(tmp):
 _slots = asyncio.Semaphore(config.MAX_PARALLEL_UPLOADS)
 
 @router.put("/{uid}/chunk/{idx}")
-async def upload_chunk(uid: str, idx: int, request: Request):
-    async with _slots:                                # a 0.1-CPU instance is better off finishing chunks one by one
-        return await _handle_chunk(uid, idx, request)
-
-async def _handle_chunk(uid: str, idx: int, request: Request):
-    with db.tx() as c:
-        f = c.execute("SELECT mode, status FROM files WHERE id=?", (uid,)).fetchone()
-    if not f or f["status"] != "uploading":
+async def upload_chunk(uid: str, idx: int, request: Request,
+                       x_host_token: str | None = Header(None), x_member_token: str | None = Header(None)):
+    with db.tx() as c:                                # check identity before taking a slot or reading the body
+        f, s, me = file_access(c, uid, x_member_token, x_host_token)
+        require_uploader(s, me)
+        others = c.execute("SELECT COALESCE(SUM(size),0) FROM chunks WHERE file_id=? AND idx!=?", (uid, idx)).fetchone()[0]
+    if f["status"] != "uploading":
         raise HTTPException(404, "unknown or finished upload")
-    tmp, size = await _spool(request)
+    async with _slots:                                # a 0.1-CPU instance is better off finishing chunks one by one
+        return await _handle_chunk(uid, idx, request, f, f["size"] - others)
+
+async def _handle_chunk(uid: str, idx: int, request: Request, f, room: int):
+    tmp, size = await _spool(request, room)
     try:
         order = sorted(range(len(config.NODES)), key=lambda i: (not pool.up[config.NODES[i]], pool.held[i]))
         placed = []
@@ -93,11 +113,10 @@ async def _handle_chunk(uid: str, idx: int, request: Request):
             "throughput_mbps": round(rate, 1), "next_chunk_size_mb": pool.recommend(rate) if f["mode"] == "auto" else None}
 
 @router.post("/{uid}/complete")
-def upload_complete(uid: str):
+def upload_complete(uid: str, x_host_token: str | None = Header(None), x_member_token: str | None = Header(None)):
     with db.tx() as c:
-        f = c.execute("SELECT size FROM files WHERE id=?", (uid,)).fetchone()
-        if not f:
-            raise HTTPException(404, "unknown upload")
+        f, s, me = file_access(c, uid, x_member_token, x_host_token)
+        require_uploader(s, me)
         got, n = c.execute("SELECT COALESCE(SUM(size),0), COUNT(*) FROM chunks WHERE file_id=?", (uid,)).fetchone()
         if got != f["size"]:
             raise HTTPException(400, f"expected {f['size']} bytes, got {got}")
@@ -106,16 +125,18 @@ def upload_complete(uid: str):
     return {"ok": True, "chunks": n}
 
 @router.delete("/{uid}")
-async def cancel_upload(uid: str, x_host_token: str | None = Header(None)):
+async def cancel_upload(uid: str, x_host_token: str | None = Header(None), x_member_token: str | None = Header(None)):
     """Cancel (or delete) a file: remove its metadata and, best effort, its chunk bytes from the nodes."""
     with db.tx() as c:
-        f = c.execute("SELECT session_id FROM files WHERE id=?", (uid,)).fetchone()
+        f = c.execute("SELECT session_id, member_id FROM files WHERE id=?", (uid,)).fetchone()
         if not f:
             return {"ok": True, "removed": False}          # already gone: cancelling twice is harmless
         s = c.execute("SELECT * FROM sessions WHERE id=?", (f["session_id"],)).fetchone()
         if not s:
             raise HTTPException(403, "file has no session")
-        check_host(s, x_host_token)
+        me = identify(c, s, x_member_token, x_host_token)
+        if me["role"] != "host" and me["member_id"] != f["member_id"]:      # you may cancel your own files; the host may cancel any
+            raise HTTPException(403, "this upload belongs to someone else")
         holders = [r["node_id"] for r in c.execute("SELECT DISTINCT node_id FROM chunk_replicas WHERE file_id=?", (uid,))]
         c.execute("DELETE FROM files WHERE id=?", (uid,))   # cascades to chunks + chunk_replicas
     stats.record("upload_cancelled", uid)

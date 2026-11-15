@@ -26,7 +26,7 @@ export default function App() {
     const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches
     r.dataset.theme = dark ? 'light' : 'dark'
   }
-  const stats = hash === '#stats'                        // separate live stats page, no session needed
+  const stats = hash.startsWith('#stats')                        // separate live stats page, no session needed
   return (
     <div className="wrap">
       <header>

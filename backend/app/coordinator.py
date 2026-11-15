@@ -1,9 +1,10 @@
 """Coordinator entry point:  uvicorn app.coordinator:app"""
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from . import config, db, pool
-from .routes import live, nodes, sessions, upload
+from .routes import live, nodes, sessions, texts, upload
 
 @asynccontextmanager
 async def lifespan(_):
@@ -18,7 +19,7 @@ async def lifespan(_):
 
 app = FastAPI(title="Folio coordinator", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
-for r in (nodes.router, sessions.router, upload.router, live.router):
+for r in (nodes.router, sessions.router, upload.router, live.router, texts.router):
     app.include_router(r)
 
 def _rss_mb():
@@ -31,8 +32,15 @@ def _rss_mb():
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "version": "streaming-3", "rss_mb": _rss_mb()}
+    return {"ok": True, "version": "streaming-4", "rss_mb": _rss_mb()}
 
 @app.get("/config")
 def public_config():
     return {"simulation": config.ALLOW_SIMULATION}      # lets the UI hide buttons the server would reject
+
+# Optional: serve the built frontend from this same server (start.py does this), so one address and one port is the whole app.
+# Mounted last so every API route above wins; anything else falls through to the UI.
+_ui = os.environ.get("FOLIO_STATIC", "")
+if _ui and os.path.isdir(_ui):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_ui, html=True), name="ui")

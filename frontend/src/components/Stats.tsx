@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { url } from '../api'
+import DbStats from './DbStats'
 import './stats.css'
 
 type NodeStat = { id: number; label: string; online: boolean; chunks: number; bytes: number }
@@ -26,6 +27,8 @@ function sentence(e: Ev): string {
     case 'chunk_stored': return `${f}: chunk ${e.idx} stored on ${names(e.nodes)}`
     case 'upload_completed': return `${f}: upload finished, ${e.detail ?? ''}`
     case 'upload_cancelled': return `${f}: upload cancelled, chunks removed`
+    case 'preview_started': return `${f}: previewed in the browser`
+    case 'text_shared': return `a text was shared (${e.detail ?? ''})`
     case 'download_started': return `${f}: download started`
     case 'chunk_served': return `${f}: chunk ${e.idx} sent from ${names(e.nodes)}`
     case 'failover': return `${f}: chunk ${e.idx}: ${names(e.nodes)} failed, ${e.detail ?? ''}`
@@ -45,6 +48,8 @@ export default function Stats() {
   const [s, setS] = useState<Snap | null>(null)
   const [err, setErr] = useState(false)
   const [at, setAt] = useState(0)
+  const [tab, setTab] = useState<'live' | 'db'>(location.hash === '#stats-db' ? 'db' : 'live')
+  const pick = (t: 'live' | 'db') => { setTab(t); history.replaceState(null, '', t === 'db' ? '#stats-db' : '#stats') }
 
   useEffect(() => {
     let stop = false, timer: ReturnType<typeof setTimeout>
@@ -82,6 +87,12 @@ export default function Stats() {
         </div>
       </section>
 
+      <div className="st-tabs" role="group" aria-label="Stats sections">
+        <button className="theme" aria-pressed={tab === 'live'} onClick={() => pick('live')}>Live storage</button>
+        <button className="theme" aria-pressed={tab === 'db'} onClick={() => pick('db')}>Database</button>
+      </div>
+
+      {tab === 'db' ? <DbStats /> : <>
       <div className="st-tiles">
         {[
           ['Files stored', t.files ?? 0], ['Data stored', fmt(t.bytes ?? 0)], ['Uploading now', t.uploads_active ?? 0],
@@ -157,6 +168,7 @@ export default function Stats() {
           </div>
         </section>
       </div>
+      </>}
     </>
   )
 }

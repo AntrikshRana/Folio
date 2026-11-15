@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { post, url } from '../api'
+import { authHeaders, post, url } from '../api'
+import { copyText } from '../copy'
+import './extras.css'
+import Teacher from './Teacher'
+import TextShare from './TextShare'
 import { DEMOS, demoFile } from '../demo'
 import type { NodeInfo, Session, SessionInfo, Transfer } from '../types'
 
@@ -18,6 +22,12 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
   const [copied, setCopied] = useState(false)
   const [sim, setSim] = useState(false)                     // server allows the failure-simulation buttons?
   useEffect(() => { fetch(url('/config')).then(r => r.json()).then(c => setSim(!!c.simulation)).catch(() => {}) }, [])
+
+  const me = info?.members.find(m => m.id === session.memberId)
+  const myState = isHost ? 'allowed' : me?.upload ?? 'pending'   // what the teacher has decided about this person
+  const canUpload = myState === 'allowed'
+  const [notice, setNotice] = useState('')
+  const [preview, setPreview] = useState<string | null>(null)   // file whose image preview is open
 
   const loadNodes = () => fetch(url('/nodes/health')).then(r => r.json()).then(setNodes).catch(() => setNodes([]))
   const loadInfo = () => fetch(url(`/sessions/${session.code}`))
@@ -38,7 +48,7 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
 
   const aborts = useRef<Record<string, AbortController>>({})
   const removeUpload = (fid?: string) => fid
-    ? fetch(url(`/upload/${fid}`), { method: 'DELETE', headers: { 'X-Host-Token': session.hostToken ?? '' } }).catch(() => {})
+    ? fetch(url(`/upload/${fid}`), { method: 'DELETE', headers: authHeaders(session) }).catch(() => {})
     : Promise.resolve()
   const cancel = async (t: Transfer) => {
     aborts.current[t.id]?.abort()                         // stop sending chunks right now
@@ -47,13 +57,33 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
     patch(t.id, () => ({ ended: true, cancelled: true, label: 'cancelled – chunks removed' }))
   }
 
-  async function upload(file: File) {
-    const key = crypto.randomUUID(), m = mode, fixed = SIZES[fixedIdx], ctrl = new AbortController()
-    aborts.current[key] = ctrl
+  const queue = useRef<{ key: string; file: File; mode: 'auto' | 'fixed'; fixed: number }[]>([])
+  const running = useRef(false)
+  async function pump() {                                 // one upload at a time keeps memory and the node pool calm
+    if (running.current) return
+    running.current = true
+    try { for (let q; (q = queue.current.shift()); ) await upload(q.key, q.file, q.mode, q.fixed) }
+    finally { running.current = false }
+  }
+  function enqueue(file: File) {
+    if (!isHost && info && file.size > info.limits.max_file_mb * MB) {    // friendly early answer; the server enforces it too
+      setNotice(`${file.name} is ${fmt(file.size)}, over this room's limit of ${info.limits.max_file_mb} MB per file.`)
+      return
+    }
+    const key = crypto.randomUUID()
+    aborts.current[key] = new AbortController()
+    const waiting = running.current || queue.current.length > 0
+    setTransfers(ts => [{ id: key, name: file.name, size: file.size, sent: 0, chunks: [], count: 0, minCopies: Infinity, label: waiting ? 'waiting in queue…' : 'starting…', done: false }, ...ts])
+    queue.current.push({ key, file, mode, fixed: SIZES[fixedIdx] })
+    pump()
+  }
+  async function upload(key: string, file: File, m: 'auto' | 'fixed', fixed: number) {
+    const ctrl = aborts.current[key]
+    if (ctrl.signal.aborted) return                       // cancelled while it was waiting in the queue
+    patch(key, () => ({ label: 'starting…' }))
     let fid: string | undefined
-    setTransfers(ts => [{ id: key, name: file.name, size: file.size, sent: 0, chunks: [], count: 0, minCopies: Infinity, label: 'starting…', done: false }, ...ts])
     try {
-      const ir = await post('/upload/init', { session: session.code, filename: file.name, size: file.size, mode: m, chunk_size_mb: fixed }, session.hostToken)
+      const ir = await post('/upload/init', { session: session.code, filename: file.name, size: file.size, mode: m, chunk_size_mb: fixed }, session.hostToken, undefined, session.memberToken)
       const init = await ir.json()
       if (!ir.ok) throw new Error(typeof init.detail === 'string' ? init.detail : 'init failed')
       fid = init.upload_id
@@ -62,14 +92,14 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
       let off = 0, idx = 0, mb: number = init.chunk_size_mb
       while (off < file.size) {
         const blob = file.slice(off, off + mb * MB)
-        const r = await fetch(url(`/upload/${init.upload_id}/chunk/${idx}`), { method: 'PUT', body: blob, signal: ctrl.signal })
+        const r = await fetch(url(`/upload/${init.upload_id}/chunk/${idx}`), { method: 'PUT', body: blob, signal: ctrl.signal, headers: authHeaders(session) })
         if (!r.ok) throw new Error((await r.json()).detail ?? 'chunk failed')
         const a = await r.json()
         off += blob.size; idx++
         mb = m === 'auto' ? a.next_chunk_size_mb : init.chunk_size_mb
         patch(key, t => ({ sent: off, chunks: [...t.chunks.slice(-499), { size: blob.size, node: a.node_index, replicas: a.replicas }], count: t.count + 1, minCopies: Math.min(t.minCopies, a.replicas), label: `chunk size ${Math.round(blob.size / MB)} MB` }))
       }
-      const c = await post(`/upload/${init.upload_id}/complete`)
+      const c = await post(`/upload/${init.upload_id}/complete`, undefined, session.hostToken, undefined, session.memberToken)
       if (!c.ok) throw new Error((await c.json()).detail)
       if (ctrl.signal.aborted) return
       patch(key, t => ({ done: true, ended: true, label: `${t.count} chunks stored` }))
@@ -80,11 +110,12 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
       removeUpload(fid)                                   // don't leave a half-written file on the nodes
     }
   }
-  const take = (fl: FileList | null) => fl && Array.from(fl).forEach(upload)
+  const take = (fl: FileList | null) => { setNotice(''); if (fl) Array.from(fl).forEach(enqueue) }
 
   const copyLink = async () => {
-    try { await navigator.clipboard.writeText(`${location.origin}/?join=${session.code}`); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* clipboard unavailable */ }
+    if (await copyText(`${location.origin}/?join=${session.code}`)) { setCopied(true); setTimeout(() => setCopied(false), 1800) }
   }
+  const view = (id: string) => url(`/sessions/${session.code}/files/${id}/view`)
   const dl = (id: string) => url(`/sessions/${session.code}/files/${id}/download`)
 
   return (
@@ -99,15 +130,19 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
           </div>
         </div>
         <div className="members">
-          {info?.members.map(m => <span key={m.name} className={'who ' + m.role}>{m.name}<small>{m.role}</small></span>)}
+          {info?.members.map(m => <span key={m.id} className={'who ' + m.role}>{m.name}<small>{m.role === 'guest' && m.upload !== 'allowed' ? m.upload : m.role}</small></span>)}
         </div>
         <p className="hint">{isHost
           ? 'Share the code or invite link. Anyone who joins can download every file in this session.'
-          : `You joined as ${session.name}. The host uploads files – you can download them below.`}</p>
+          : `You joined as ${session.name}. ` + {
+              allowed: 'You can share files and text here, and download everything that is shared.',
+              pending: 'Waiting for the teacher to approve your uploads. You can still download everything that is shared.',
+              blocked: 'The teacher has turned off uploading for you. You can still download everything that is shared.',
+            }[myState]}</p>
       </section>
 
       <div className="grid">
-        {isHost ? (
+        {canUpload ? (
           <section className="sheet up">
             <div className="tape" />
             <h2>Upload a file</h2>
@@ -116,12 +151,14 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
               onDrop={e => { e.preventDefault(); setOver(false); take(e.dataTransfer.files) }}>
               <svg viewBox="0 0 48 48"><path d="M8 30v10h32V30M24 6v26M14 16L24 6l10 10" /></svg>
               <div className="big">Drop a file here, or click to choose</div>
-              <span className="note">any size – it gets split for you</span>
+              <span className="note">{isHost ? 'any size – it gets split for you' : `up to ${info?.limits.max_file_mb ?? 50} MB per file, ${info?.limits.max_files_per_guest ?? 5} files each`}</span>
               <input type="file" multiple hidden onChange={e => { take(e.target.files); e.target.value = '' }} />
             </label>
+            {notice && <p className="err">{notice}</p>}
+            {isHost && <>
             <div className="demos">
               <span className="note-h">or try a demo file:</span>
-              {DEMOS.map(d => <button key={d.name} className="chip-btn" onClick={() => upload(demoFile(d))}>{d.name} <small>{d.label}</small></button>)}
+              {DEMOS.map(d => <button key={d.name} className="chip-btn" onClick={() => enqueue(demoFile(d))}>{d.name} <small>{d.label}</small></button>)}
             </div>
             <div className="row">
               <div className="seg" data-m={mode === 'auto' ? 'auto' : 'manual'}>
@@ -133,12 +170,13 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
               <input type="range" min={0} max={6} value={fixedIdx} disabled={mode === 'auto'} onChange={e => setFixedIdx(+e.target.value)} />
               <p className="hint">{mode === 'auto' ? 'The coordinator measures each node and suggests the next chunk size.' : `Every chunk will be ${SIZES[fixedIdx]} MB (capped by the server's limit).`}</p>
             </div>
+            </>}
           </section>
         ) : (
           <section className="sheet up">
             <div className="tape" />
             <h2>Guest access</h2>
-            <p className="hint">Files appear under “Shared files” the moment the host finishes uploading. Nothing to do here but download.</p>
+            <p className="hint">{myState === 'blocked' ? 'The teacher has turned off uploading for you.' : 'Waiting for the teacher to approve your uploads.'} Shared files and text appear below, and you can download or copy them.</p>
           </section>
         )}
 
@@ -164,7 +202,10 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
         </section>
       </div>
 
-      {isHost && transfers.length > 0 && (
+      {isHost && info && <Teacher session={session} info={info} reload={loadInfo} />}
+      {info && <TextShare session={session} info={info} canShare={canUpload} isHost={isHost} reload={loadInfo} />}
+
+      {transfers.length > 0 && (
         <>
           <div className="sec-t"><h2>On the desk</h2><span>wider squares = bigger chunks</span></div>
           <div className="files">
@@ -198,12 +239,16 @@ export default function Room({ session, onLeave }: { session: Session; onLeave: 
       {!info || info.files.length === 0 ? <p className="hint">No finished uploads yet.</p> : (
         <div className="lib">
           {info.files.map(f => (
-            <div key={f.id} className="sheet lib-row">
-              <div className="lib-name"><b>{f.filename}</b><small>{fmt(f.size)} · {f.chunks} chunks · ×{f.min_replicas} copies</small></div>
+            <div key={f.id}>
+            <div className="sheet lib-row">
+              <div className="lib-name"><b>{f.filename}</b><small>{fmt(f.size)} · {f.chunks} chunks · ×{f.min_replicas} copies{f.uploader ? ` · from ${f.uploader}` : ''}</small>
+                {f.preview && f.available && <button className="mini" onClick={() => setPreview(p => (p === f.id ? null : f.id))}>{preview === f.id ? 'Hide preview' : 'Preview'}</button>}</div>
               <span className="dots" title="nodes holding chunks">
                 {f.nodes.map(n => <i key={n} style={{ '--c': `var(--n${n % 4})` } as CSSProperties} />)}
               </span>
               {f.available ? <a className="btn dl" href={dl(f.id)}>Download</a> : <button className="btn dl" disabled>Node offline</button>}
+            </div>
+            {preview === f.id && <div className="sheet preview"><img src={view(f.id)} alt={`Preview of ${f.filename}`} /></div>}
             </div>
           ))}
         </div>

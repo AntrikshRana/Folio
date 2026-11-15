@@ -1,6 +1,9 @@
 """File queries and chunk streaming shared by the routes."""
 import asyncio
-from . import config, pool, stats
+from . import config, pool, rules, stats
+
+# files that count towards limits: finished ones, plus uploads started within the last hour (abandoned ones stop counting)
+LIVE = "(status = 'complete' OR created_at > datetime('now', '-1 hour'))"
 
 _dl_slots = asyncio.Semaphore(config.MAX_PARALLEL_DOWNLOADS)   # bounds simultaneous relays (each holds a few buffers)
 
@@ -9,6 +12,7 @@ def list_files(c, session_id: str) -> list[dict]:
     ph = ",".join("?" * len(online))
     rows = c.execute(f"""
         SELECT f.id, f.filename, f.size, f.created_at,
+          (SELECT m.name FROM session_members m WHERE m.session_id = f.session_id AND m.member_id = f.member_id) AS uploader,
           (SELECT COUNT(*) FROM chunks k WHERE k.file_id = f.id) AS chunks,
           (SELECT GROUP_CONCAT(DISTINCT r.node_id) FROM chunk_replicas r WHERE r.file_id = f.id) AS nodes,
           NOT EXISTS (SELECT 1 FROM chunks k WHERE k.file_id = f.id AND NOT EXISTS (
@@ -19,8 +23,9 @@ def list_files(c, session_id: str) -> list[dict]:
     mins = dict(c.execute("""SELECT file_id, MIN(n) FROM (
         SELECT file_id, idx, COUNT(*) AS n FROM chunk_replicas GROUP BY file_id, idx) GROUP BY file_id""").fetchall())
     return [{"id": r["id"], "filename": r["filename"], "size": r["size"], "chunks": r["chunks"],
-             "created_at": r["created_at"], "nodes": sorted(int(x) for x in (r["nodes"] or "").split(",") if x),
-             "min_replicas": mins.get(r["id"], 0), "available": bool(r["available"])} for r in rows]
+             "created_at": r["created_at"], "uploader": r["uploader"], "nodes": sorted(int(x) for x in (r["nodes"] or "").split(",") if x),
+             "min_replicas": mins.get(r["id"], 0), "available": bool(r["available"]),
+             "preview": rules.previewable(r["filename"], r["size"])} for r in rows]
 
 def chunk_plan(c, file_id: str) -> list[tuple[int, list[int]]]:
     """[(chunk index, [node ids holding a copy]), ...] in file order."""

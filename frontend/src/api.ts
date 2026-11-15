@@ -13,10 +13,16 @@ export async function fetchRetry(input: string, init?: RequestInit, onWait?: () 
   }
 }
 
-export function post(path: string, body?: unknown, hostToken?: string, onWait?: () => void) {
+/** Headers that tell the server who is calling. */
+export const authHeaders = (s: { hostToken?: string; memberToken?: string }): Record<string, string> => ({
+  ...(s.hostToken ? { 'X-Host-Token': s.hostToken } : {}),
+  ...(s.memberToken ? { 'X-Member-Token': s.memberToken } : {}),
+})
+
+export function post(path: string, body?: unknown, hostToken?: string, onWait?: () => void, memberToken?: string) {
   return fetchRetry(url(path), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(hostToken ? { 'X-Host-Token': hostToken } : {}) },
+    headers: { 'Content-Type': 'application/json', ...authHeaders({ hostToken, memberToken }) },
     body: body ? JSON.stringify(body) : undefined,
   }, onWait)
 }
