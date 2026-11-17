@@ -13,7 +13,7 @@ This guide explains how to run, configure, and troubleshoot Folio locally and in
 
 ### 1. Start the backend services
 
-From the repository root:
+From the repository root, create an environment and install dependencies:
 
 ```bash
 cd backend
@@ -23,14 +23,25 @@ python -m venv .venv
 # macOS/Linux
 source .venv/bin/activate
 pip install -r requirements.txt
-python run_local.py
 ```
 
-`run_local.py` starts:
+Then start each service in its own terminal:
 
-- the coordinator on port `8000`
-- three node services on ports `8001`, `8002`, and `8003`
-- a shared SQLite database under `backend/data`
+```bash
+# terminal 1: coordinator
+python -m uvicorn app.coordinator:app --host 0.0.0.0 --port 8000
+
+# terminal 2: node 1
+python -m uvicorn app.node:app --host 0.0.0.0 --port 8001
+
+# terminal 3: node 2
+python -m uvicorn app.node:app --host 0.0.0.0 --port 8002
+
+# terminal 4: node 3
+python -m uvicorn app.node:app --host 0.0.0.0 --port 8003
+```
+
+Each service keeps its data under `backend/data` unless a different `DATA_DIR` is configured.
 
 ### 2. Start the frontend
 

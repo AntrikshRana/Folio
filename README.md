@@ -7,7 +7,6 @@ Hosts upload big files in adaptive chunks (replicated on 2 nodes); guests join w
     render.yaml                  Render Blueprint (static site + coordinator + 3 nodes)
     backend/
       requirements.txt
-      run_local.py               starts 3 nodes + coordinator for local dev
       app/
         config.py                every setting is an environment variable
         db.py                    SQLite schema + migrations
@@ -21,11 +20,22 @@ Hosts upload big files in adaptive chunks (replicated on 2 nodes); guests join w
       src/ App.tsx  api.ts  types.ts  demo.ts  components/{SessionGate,Room}.tsx
 
 ## Run locally (Python 3.10+, Node 18+)
-    cd backend && python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-    pip install -r requirements.txt && python run_local.py
-    # new terminal
+    cd backend
+    python -m venv .venv
+    # Windows: .venv\Scripts\activate
+    # macOS/Linux: source .venv/bin/activate
+    pip install -r requirements.txt
+    # terminal 1: start the coordinator
+    python -m uvicorn app.coordinator:app --host 0.0.0.0 --port 8000
+    # terminal 2: start node 1
+    python -m uvicorn app.node:app --host 0.0.0.0 --port 8001
+    # terminal 3: start node 2
+    python -m uvicorn app.node:app --host 0.0.0.0 --port 8002
+    # terminal 4: start node 3
+    python -m uvicorn app.node:app --host 0.0.0.0 --port 8003
+    # terminal 5: start the UI
     cd frontend && npm install && npm run dev        # http://localhost:5173
-Other devices on your Wi-Fi can join at http://<your-LAN-IP>:5173 (dev server runs with --host).
+Other devices on your Wi‑Fi can join at http://<your-LAN-IP>:5173 (dev server runs with --host).
 
 ## Deploy on Render
 1. Push this folder to a GitHub repo (render.yaml must be in the repo root).
