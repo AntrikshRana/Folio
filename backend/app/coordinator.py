@@ -46,7 +46,7 @@ def healthz():
 def public_config():
     return {"simulation": config.ALLOW_SIMULATION}      # lets the UI hide buttons the server would reject
 
-# Optional: serve a built frontend from the same server when the app is being hosted as a single address.
+# Optional: serve the built frontend from this same server (start.py does this), so one address and one port is the whole app.
 # Mounted last so every API route above wins; anything else falls through to the UI.
 _ui = os.environ.get("FOLIO_STATIC", "")
 if _ui and os.path.isdir(_ui):

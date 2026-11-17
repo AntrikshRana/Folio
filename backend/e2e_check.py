@@ -1,8 +1,7 @@
-"""End-to-end check against a RUNNING Folio.
+"""End-to-end check against a RUNNING Folio:   python run_local.py   (one terminal)   then   python e2e_check.py   (another).
 
-Start the coordinator and the three storage nodes manually in separate terminals, then run this script in another.
-Uploads and downloads real data through the coordinator and the storage nodes, fails nodes on purpose,
-and prints PASS/FAIL for each claim. Exit code 0 means everything passed. Needs: pip install httpx.
+Uploads and downloads real data through the coordinator and the three storage nodes, fails nodes on purpose,
+and prints PASS/FAIL for each claim. Exit code 0 means everything passed. Needs: pip install httpx
 """
 import hashlib, os, sys, threading, time
 import httpx
@@ -41,7 +40,7 @@ sha = lambda b: hashlib.sha256(b).hexdigest()
 try:
     h = c.get("/healthz").json()
 except httpx.HTTPError:
-    sys.exit(f"Cannot reach {API}. Start the coordinator and all three node services first.")
+    sys.exit(f"Cannot reach {API}. Start the stack first:  python run_local.py")
 nodes = c.get("/nodes/health").json()
 check("coordinator is up and all 3 storage nodes are online", h["ok"] and len(nodes) == 3 and all(n["online"] for n in nodes), ", ".join(n["name"] for n in nodes))
 rss0 = h["rss_mb"]

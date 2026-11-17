@@ -91,13 +91,9 @@ def _cols(c, table):
     return [r["name"] for r in c.execute(f"PRAGMA table_info({table})")]
 
 def init():
-    # Startup upgrades are intentionally tolerant of old schemas: the app can recover in-place
-    # without dropping user data, while still converging to the current table layout.
     os.makedirs(config.DATA_DIR, exist_ok=True)
     with tx() as c:
         c.execute("PRAGMA journal_mode=WAL")
-        # Older runtimes stored replica placement directly on the chunks table; this step moves
-        # that data into the dedicated chunk_replicas table during a one-time migration.
         migrate_p1 = "node_id" in _cols(c, "chunks")           # Part-1 schema: chunks.node_id
         if migrate_p1:
             c.executescript("DROP INDEX IF EXISTS idx_chunks_node; ALTER TABLE chunks RENAME TO chunks_old;")
