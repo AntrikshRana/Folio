@@ -1,7 +1,6 @@
 """Load sample data into a RUNNING Folio so the stats page and the room are not empty.
 
-    python seed_demo.py            (or:  python start.py --seed)
-
+Run this after the coordinator and the node services are already up.
 Creates a room "Demo teacher" with two guests, uploads a few files (including two real images, so Preview works)
 and shares two texts. Prints the room code. Safe to run more than once: each run makes a new room.
 """
@@ -40,7 +39,7 @@ def upload(code, hdr, data, name, chunk_mb=4):
 try:
     c.get("/healthz").raise_for_status()
 except httpx.HTTPError:
-    sys.exit(f"Cannot reach {API}. Start Folio first:  python start.py")
+    sys.exit(f"Cannot reach {API}. Start the coordinator and node services first.")
 
 print("Loading demo data...")
 t = c.post("/sessions", json={"name": "Demo teacher", "upload_policy": "open", "max_file_mb": 50, "max_files_per_guest": 5, "room_quota_mb": 1024}).json()

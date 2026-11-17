@@ -17,6 +17,8 @@ class Init(BaseModel):
     chunk_size_mb: int = Field(default=8, ge=1)
 
 def _check_limits(c, s, me, size: int) -> None:
+    # Guest uploads are hard-capped by per-person and room-wide quotas. The host is exempt
+    # because they are the room administrator and not a normal participant.
     mb = config.MB
     if size > s["max_file_mb"] * mb:
         raise HTTPException(413, f"this file is {size / mb:.1f} MB but the limit here is {s['max_file_mb']} MB per file")
@@ -32,7 +34,8 @@ def _check_limits(c, s, me, size: int) -> None:
 def upload_init(b: Init, x_host_token: str | None = Header(None), x_member_token: str | None = Header(None)):
     uid = uuid.uuid4().hex
     with db.tx() as c:
-        # Reserve the write lock before checking quotas to prevent two parallel inits exceeding them.
+        # Reserve the write lock before checking quotas to prevent two parallel inits from
+        # oversubscribing the same room while both still believe they are under the limit.
         c.execute("BEGIN IMMEDIATE")
         s = get_session(c, b.session)
         me = identify(c, s, x_member_token, x_host_token)     # who is asking?
@@ -118,6 +121,7 @@ async def _handle_chunk(uid: str, idx: int, request: Request, f, room: int):
             raise HTTPException(410, "upload was cancelled")
     finally:
         tmp.close()
+    # The caller receives a single representative node for throughput tuning; the DB stores the full replica set.
     rate = pool.tp[config.NODES[placed[0]]]
     return {"index": idx, "node_index": placed[0], "nodes": placed, "replicas": len(placed), "size": size,
             "throughput_mbps": round(rate, 1), "next_chunk_size_mb": pool.recommend(rate) if f["mode"] == "auto" else None}
@@ -125,6 +129,8 @@ async def _handle_chunk(uid: str, idx: int, request: Request, f, room: int):
 @router.post("/{uid}/complete")
 def upload_complete(uid: str, x_host_token: str | None = Header(None), x_member_token: str | None = Header(None)):
     with db.tx() as c:
+        # File completion is validated against the chunk ledger, not just the row status, so a
+        # partially written or cancelled upload cannot be marked finished by accident.
         f, s, me = file_access(c, uid, x_member_token, x_host_token)
         require_uploader(s, me)
         got, n, first_idx, last_idx = c.execute(
