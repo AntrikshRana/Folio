@@ -8,13 +8,16 @@ import type { Session } from './types'
 const KEY = 'folio-session'
 
 function loadSession(): Session | null {
-  if (new URLSearchParams(location.search).has('join')) return null     // an invite link wins over a saved session
+  // A join link should always override a stale browser session, so guests land on the invited room
+  // instead of an old one silently rehydrated from local storage.
+  if (new URLSearchParams(location.search).has('join')) return null
   try { return JSON.parse(localStorage.getItem(KEY) ?? 'null') } catch { return null }
 }
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession)
-  useEffect(() => { fetch(url('/nodes/health')).catch(() => {}) }, [])   // pre-wake coordinator + nodes
+  // Warm the coordinator and node fleet once during startup so the first real API call is not a cold miss.
+  useEffect(() => { fetch(url('/nodes/health')).catch(() => {}) }, [])
   const [hash, setHash] = useState(location.hash)
   useEffect(() => { const f = () => setHash(location.hash); addEventListener('hashchange', f); return () => removeEventListener('hashchange', f) }, [])
   const change = (s: Session | null) => {
