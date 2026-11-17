@@ -1,49 +1,20 @@
 # Folio: quick start
 
-You need Python 3.10+ and Node.js 18+.
+You need Python 3.10+ and (once, to build the web page) Node.js 18+.
 
-```bash
+```
 cd backend
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
 pip install -r requirements-pinned.txt     # exact versions that were tested
+cd ..
+python start.py --seed                     # builds the UI, starts everything, loads sample data
 ```
 
-Start the coordinator and storage nodes in separate terminals:
-
-```bash
-# terminal 1
-cd backend
-python -m uvicorn app.coordinator:app --host 0.0.0.0 --port 8000
-
-# terminal 2
-cd backend
-python -m uvicorn app.node:app --host 0.0.0.0 --port 8001
-
-# terminal 3
-cd backend
-python -m uvicorn app.node:app --host 0.0.0.0 --port 8002
-
-# terminal 4
-cd backend
-python -m uvicorn app.node:app --host 0.0.0.0 --port 8003
-```
-
-Then start the frontend in another terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open the UI at http://localhost:5173. Phones and laptops on the same Wi‑Fi can use the LAN address from the dev server.
+Open the address it prints. Phones and laptops on the same Wi-Fi can open the "Other devices" address
+(allow Python through the firewall if asked).
 
 - Start a session as the teacher, share the code or invite link, join from another device.
 - Live stats: add `/#stats` to the address. Database tab: `/#stats-db`.
-- Check everything works end to end in a separate terminal: `cd backend && python e2e_check.py`
+- Check everything works end to end (second terminal): `cd backend && python e2e_check.py`
 
-Nothing is installed outside the project folder except the Python and npm packages.
+Options: `--fresh` (delete old data), `--no-sim` (hide Simulate failure), `--no-build`, `--port N`.
+Stop with Ctrl+C. Nothing is installed outside the project folder except the Python and npm packages.
