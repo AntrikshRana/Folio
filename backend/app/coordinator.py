@@ -12,13 +12,21 @@ async def lifespan(_):
     with db.tx() as c:
         for i, url in enumerate(config.NODES):
             c.execute("INSERT INTO nodes(id,url) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET url=excluded.url", (i, url))
+        # Restore the scheduler's load counts so uploads keep balancing against chunks already on disk after a restart.
         for r in c.execute("SELECT node_id, COUNT(*) AS n FROM chunk_replicas GROUP BY node_id"):
             pool.held[r["node_id"]] = r["n"]
     yield
     await pool.client.aclose()
 
-app = FastAPI(title="Folio coordinator", lifespan=lifespan)
+app = FastAPI(
+    title="Folio coordinator",
+    lifespan=lifespan,
+    openapi_tags=[
+        {"name": "upload", "description": "Initialize uploads, store chunks across nodes, complete, or cancel files."},
+    ],
+)
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+# The coordinator publishes the upload router's endpoints as part of its public API.
 for r in (nodes.router, sessions.router, upload.router, live.router, texts.router):
     app.include_router(r)
 

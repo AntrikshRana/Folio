@@ -6,7 +6,8 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Literal
 import db
 
 NODES = os.getenv("NODES", "http://127.0.0.1:8001,http://127.0.0.1:8002,http://127.0.0.1:8003").split(",")
@@ -49,10 +50,11 @@ async def nodes_health():
     return await asyncio.gather(*(ping(i, u) for i, u in enumerate(NODES)))
 
 class Init(BaseModel):
-    filename: str
-    size: int
-    mode: str = "auto"          # "auto" | "fixed"
-    chunk_size_mb: int = 8
+    filename: str = Field(min_length=1, max_length=255)
+    size: int = Field(ge=0)
+    # Reject unknown modes instead of silently treating them as fixed-size uploads.
+    mode: Literal["auto", "fixed"] = "auto"
+    chunk_size_mb: int = Field(default=8, ge=1)
 
 @app.post("/upload/init")
 def upload_init(b: Init):
@@ -63,11 +65,20 @@ def upload_init(b: Init):
 
 @app.put("/upload/{uid}/chunk/{idx}")
 async def upload_chunk(uid: str, idx: int, request: Request):
+    if idx < 0:
+        raise HTTPException(400, "chunk index must be zero or greater")
     with db.tx() as c:
-        f = c.execute("SELECT mode, status FROM files WHERE id=?", (uid,)).fetchone()
+        f = c.execute("SELECT mode, status, size FROM files WHERE id=?", (uid,)).fetchone()
+        # Exclude this index so a retry can replace the chunk without double-counting its old size.
+        other_bytes = c.execute(
+            "SELECT COALESCE(SUM(size),0) FROM chunks WHERE file_id=? AND idx!=?", (uid, idx)
+        ).fetchone()[0]
     if not f or f["status"] != "uploading":
         raise HTTPException(404, "unknown or finished upload")
     data = await request.body()
+    # Do not accept bytes beyond the size announced at /upload/init.
+    if len(data) > f["size"] - other_bytes:
+        raise HTTPException(413, "chunk data exceeds the file size announced at upload initialization")
     order = sorted(range(len(NODES)), key=lambda i: (not up[NODES[i]], held[i]))
     for i in order:                                  # least-loaded online node first, then fail over
         url, t0 = NODES[i], time.perf_counter()
@@ -92,9 +103,14 @@ def upload_complete(uid: str):
         f = c.execute("SELECT size FROM files WHERE id=?", (uid,)).fetchone()
         if not f:
             raise HTTPException(404, "unknown upload")
-        got, n = c.execute("SELECT COALESCE(SUM(size),0), COUNT(*) FROM chunks WHERE file_id=?", (uid,)).fetchone()
+        got, n, first_idx, last_idx = c.execute(
+            "SELECT COALESCE(SUM(size),0), COUNT(*), MIN(idx), MAX(idx) FROM chunks WHERE file_id=?", (uid,)
+        ).fetchone()
         if got != f["size"]:
             raise HTTPException(400, f"expected {f['size']} bytes, got {got}")
+        # Correct byte totals are not enough: ordered downloads also require every index from 0 to n-1.
+        if n and (first_idx != 0 or last_idx != n - 1):
+            raise HTTPException(400, "upload is missing one or more chunks")
         c.execute("UPDATE files SET status='complete' WHERE id=?", (uid,))
     return {"ok": True, "chunks": n}
 
